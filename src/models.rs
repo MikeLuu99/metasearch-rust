@@ -18,15 +18,11 @@ pub struct AggregatedResult {
 }
 
 /// Query parameters extracted from the HTTP request by the Axum handler.
+/// `max_results` is optional and capped by the server config in the handler.
 #[derive(Debug, Deserialize)]
 pub struct SearchQuery {
     pub q: String,
-    #[serde(default = "default_max_results")]
-    pub max_results: usize,
-}
-
-fn default_max_results() -> usize {
-    10
+    pub max_results: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]

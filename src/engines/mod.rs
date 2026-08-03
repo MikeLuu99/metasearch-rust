@@ -30,21 +30,47 @@ pub trait SearchEngine: Send + Sync {
     ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>>;
 }
 
+// Default per-query timeout applied to every engine unless overridden via
+// `with_timeout`. Mirrors the old hardcoded ENGINE_TIMEOUT_MS default.
+pub const DEFAULT_TIMEOUT_MS: u64 = 8_000;
+
 pub struct DuckDuckGoEngine {
     pub client: Arc<Client>,
+    pub timeout: Duration,
 }
 
 pub struct BraveEngine {
     pub client: Arc<Client>,
+    pub timeout: Duration,
 }
 
 pub struct StartpageEngine {
     pub client: Arc<Client>,
+    pub timeout: Duration,
 }
 
 pub struct YahooEngine {
     pub client: Arc<Client>,
+    pub timeout: Duration,
 }
+
+macro_rules! impl_engine_constructors {
+    ($($engine:ident),+ $(,)?) => {
+        $(
+            impl $engine {
+                pub fn new(client: Arc<Client>) -> Self {
+                    Self::with_timeout(client, Duration::from_millis(DEFAULT_TIMEOUT_MS))
+                }
+
+                pub fn with_timeout(client: Arc<Client>, timeout: Duration) -> Self {
+                    Self { client, timeout }
+                }
+            }
+        )+
+    };
+}
+
+impl_engine_constructors!(DuckDuckGoEngine, BraveEngine, StartpageEngine, YahooEngine,);
 
 impl SearchEngine for DuckDuckGoEngine {
     fn name(&self) -> &'static str {
@@ -56,7 +82,12 @@ impl SearchEngine for DuckDuckGoEngine {
         query: &'a str,
         max_results: usize,
     ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
-        Box::pin(duckduckgo::search(&self.client, query, max_results))
+        Box::pin(duckduckgo::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
     }
 }
 
@@ -70,7 +101,12 @@ impl SearchEngine for BraveEngine {
         query: &'a str,
         max_results: usize,
     ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
-        Box::pin(brave::search(&self.client, query, max_results))
+        Box::pin(brave::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
     }
 }
 
@@ -84,7 +120,12 @@ impl SearchEngine for StartpageEngine {
         query: &'a str,
         max_results: usize,
     ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
-        Box::pin(startpage::search(&self.client, query, max_results))
+        Box::pin(startpage::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
     }
 }
 
@@ -98,7 +139,12 @@ impl SearchEngine for YahooEngine {
         query: &'a str,
         max_results: usize,
     ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
-        Box::pin(yahoo::search(&self.client, query, max_results))
+        Box::pin(yahoo::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
     }
 }
 

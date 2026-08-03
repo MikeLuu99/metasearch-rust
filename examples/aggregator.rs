@@ -25,18 +25,10 @@ async fn main() -> anyhow::Result<()> {
     let client = Arc::new(build_http_client()?);
 
     let engines: Vec<Arc<dyn SearchEngine>> = vec![
-        Arc::new(DuckDuckGoEngine {
-            client: Arc::clone(&client),
-        }),
-        Arc::new(BraveEngine {
-            client: Arc::clone(&client),
-        }),
-        Arc::new(StartpageEngine {
-            client: Arc::clone(&client),
-        }),
-        Arc::new(YahooEngine {
-            client: Arc::clone(&client),
-        }),
+        Arc::new(DuckDuckGoEngine::new(Arc::clone(&client))),
+        Arc::new(BraveEngine::new(Arc::clone(&client))),
+        Arc::new(StartpageEngine::new(Arc::clone(&client))),
+        Arc::new(YahooEngine::new(Arc::clone(&client))),
     ];
 
     let (successes, failures) = query_all_engines(&engines, &query, results_per_engine).await;

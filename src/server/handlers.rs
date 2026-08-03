@@ -28,7 +28,9 @@ pub async fn search(
 ) -> Result<(StatusCode, Json<SearchResponse>), AppError> {
     let Query(params) = match params {
         Ok(p) => p,
-        Err(_) => return Err(AppError::bad_request("query parameter 'q' is required")),
+        Err(_) => {
+            return Err(AppError::bad_request("invalid query parameters"));
+        }
     };
 
     let query = params.q.trim().to_string();
@@ -36,6 +38,13 @@ pub async fn search(
     if query.is_empty() {
         return Err(AppError::bad_request("query parameter 'q' cannot be empty"));
     }
+
+    // Client may request fewer results, but never more than the server cap.
+    let max_results = params
+        .max_results
+        .unwrap_or(state.max_results)
+        .min(state.max_results)
+        .max(1);
 
     let (successes, failures) =
         query_all_engines(&state.engines, &query, state.results_per_engine).await;
@@ -53,7 +62,7 @@ pub async fn search(
         ));
     }
 
-    let results = aggregate(successes, state.max_results);
+    let results = aggregate(successes, max_results);
 
     Ok((
         StatusCode::OK,

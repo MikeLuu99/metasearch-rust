@@ -249,15 +249,9 @@ mod tests {
         let client = Arc::new(crate::engines::build_http_client().unwrap());
 
         let engines: Vec<Arc<dyn SearchEngine>> = vec![
-            Arc::new(DuckDuckGoEngine {
-                client: Arc::clone(&client),
-            }),
-            Arc::new(BraveEngine {
-                client: Arc::clone(&client),
-            }),
-            Arc::new(StartpageEngine {
-                client: Arc::clone(&client),
-            }),
+            Arc::new(DuckDuckGoEngine::new(Arc::clone(&client))),
+            Arc::new(BraveEngine::new(Arc::clone(&client))),
+            Arc::new(StartpageEngine::new(Arc::clone(&client))),
         ];
 
         let (successes, failures) =

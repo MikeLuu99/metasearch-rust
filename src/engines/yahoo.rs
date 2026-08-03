@@ -8,15 +8,15 @@ use crate::models::SearchResult;
 
 const ENGINE: &str = "yahoo";
 const YAHOO_URL: &str = "https://search.yahoo.com/search";
-const TIMEOUT_MS: u64 = 8_000;
 
 pub async fn search(
     client: &Client,
     query: &str,
     max_results: usize,
+    timeout: Duration,
 ) -> Result<Vec<SearchResult>, EngineError> {
     let response = tokio::time::timeout(
-        Duration::from_millis(TIMEOUT_MS),
+        timeout,
         client
             .get(YAHOO_URL)
             .query(&[("p", query)])
@@ -250,9 +250,14 @@ mod tests {
     #[ignore]
     async fn test_live_search() {
         let client = crate::engines::build_http_client().unwrap();
-        let results = search(&client, "rust programming language", 10)
-            .await
-            .unwrap();
+        let results = search(
+            &client,
+            "rust programming language",
+            10,
+            Duration::from_millis(crate::engines::DEFAULT_TIMEOUT_MS),
+        )
+        .await
+        .unwrap();
 
         println!("Got {} results:", results.len());
         for r in &results {

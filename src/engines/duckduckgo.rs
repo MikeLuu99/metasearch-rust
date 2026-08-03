@@ -9,24 +9,19 @@ use crate::models::SearchResult;
 const ENGINE: &str = "duckduckgo";
 const DDG_URL: &str = "https://html.duckduckgo.com/html/";
 
-// Conservative limit so a slow DDG response doesn't block the whole fan-out.
-const TIMEOUT_MS: u64 = 8_000;
-
 pub async fn search(
     client: &Client,
     query: &str,
     max_results: usize,
+    timeout: Duration,
 ) -> Result<Vec<SearchResult>, EngineError> {
-    let response = tokio::time::timeout(
-        Duration::from_millis(TIMEOUT_MS),
-        client.get(DDG_URL).query(&[("q", query)]).send(),
-    )
-    .await
-    .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-    .map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    let response = tokio::time::timeout(timeout, client.get(DDG_URL).query(&[("q", query)]).send())
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })?
+        .map_err(|e| EngineError::Http {
+            engine: ENGINE,
+            source: e,
+        })?;
 
     if !response.status().is_success() {
         return Err(EngineError::BadStatus {
@@ -168,9 +163,14 @@ mod tests {
     #[ignore]
     async fn test_live_search() {
         let client = crate::engines::build_http_client().unwrap();
-        let results = search(&client, "rust programming language", 10)
-            .await
-            .unwrap();
+        let results = search(
+            &client,
+            "rust programming language",
+            10,
+            Duration::from_millis(crate::engines::DEFAULT_TIMEOUT_MS),
+        )
+        .await
+        .unwrap();
 
         println!("Got {} results:", results.len());
         for r in &results {

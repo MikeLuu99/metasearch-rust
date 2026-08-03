@@ -22,19 +22,12 @@ async fn main() -> anyhow::Result<()> {
 
     let client = Arc::new(build_http_client()?);
 
+    let timeout = std::time::Duration::from_millis(config.engine_timeout_ms);
     let engines: Vec<Arc<dyn SearchEngine>> = vec![
-        Arc::new(DuckDuckGoEngine {
-            client: Arc::clone(&client),
-        }),
-        Arc::new(BraveEngine {
-            client: Arc::clone(&client),
-        }),
-        Arc::new(StartpageEngine {
-            client: Arc::clone(&client),
-        }),
-        Arc::new(YahooEngine {
-            client: Arc::clone(&client),
-        }),
+        Arc::new(DuckDuckGoEngine::with_timeout(Arc::clone(&client), timeout)),
+        Arc::new(BraveEngine::with_timeout(Arc::clone(&client), timeout)),
+        Arc::new(StartpageEngine::with_timeout(Arc::clone(&client), timeout)),
+        Arc::new(YahooEngine::with_timeout(Arc::clone(&client), timeout)),
     ];
 
     let state = Arc::new(AppState {

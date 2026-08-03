@@ -74,7 +74,7 @@ use metadata_search_engine_rs::engines::{DuckDuckGoEngine, SearchEngine, build_h
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let client = Arc::new(build_http_client()?);
-    let engine = DuckDuckGoEngine { client };
+    let engine = DuckDuckGoEngine::new(client);
 
     let results = engine.search("rust programming", 5).await?;
     for r in results {
@@ -97,10 +97,10 @@ use metadata_search_engine_rs::{
 async fn main() -> anyhow::Result<()> {
     let client = Arc::new(build_http_client()?);
     let engines: Vec<Arc<dyn SearchEngine>> = vec![
-        Arc::new(DuckDuckGoEngine { client: Arc::clone(&client) }),
-        Arc::new(BraveEngine     { client: Arc::clone(&client) }),
-        Arc::new(StartpageEngine { client: Arc::clone(&client) }),
-        Arc::new(YahooEngine     { client: Arc::clone(&client) }),
+        Arc::new(DuckDuckGoEngine::new(Arc::clone(&client))),
+        Arc::new(BraveEngine::new(Arc::clone(&client))),
+        Arc::new(StartpageEngine::new(Arc::clone(&client))),
+        Arc::new(YahooEngine::new(Arc::clone(&client))),
     ];
 
     let (successes, failures) = query_all_engines(&engines, "rust programming", 10).await;
@@ -130,8 +130,8 @@ use metadata_search_engine_rs::{
 async fn main() -> anyhow::Result<()> {
     let client = Arc::new(build_http_client()?);
     let engines: Vec<Arc<dyn SearchEngine>> = vec![
-        Arc::new(DuckDuckGoEngine { client: Arc::clone(&client) }),
-        Arc::new(BraveEngine     { client: Arc::clone(&client) }),
+        Arc::new(DuckDuckGoEngine::new(Arc::clone(&client))),
+        Arc::new(BraveEngine::new(Arc::clone(&client))),
     ];
 
     let (successes, _) = query_all_engines(&engines, "tokio async rust", 5).await;
@@ -237,4 +237,6 @@ impl SearchEngine for MyEngine {
 }
 ```
 
-Add it to `engines/mod.rs` and wire it in `main.rs`
+Add it to `engines/mod.rs` and wire it in `main.rs`. Give the struct a
+`timeout: Duration` field and a `new()`/`with_timeout()` constructor pair like
+the built-in engines, and pass the timeout into the module's `search` function.

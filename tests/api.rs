@@ -236,3 +236,48 @@ async fn test_search_partial_engine_failure_still_returns_results() {
     assert_eq!(failed.len(), 1);
     assert_eq!(failed[0], "failing");
 }
+
+#[tokio::test]
+async fn test_search_respects_client_max_results_capped_by_config() {
+    let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockEngine {
+        name: "mock",
+        results: (1..=20)
+            .map(|i| mock_result(&format!("R{i}"), &format!("https://example{i}.com"), "mock"))
+            .collect(),
+    })];
+
+    let state = Arc::new(AppState {
+        engines,
+        results_per_engine: 10,
+        max_results: 10,
+    });
+    let router = build_router(state);
+
+    // Cap: request 50, get at most 10 (server config)
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/search?q=rust&max_results=50")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["results"].as_array().unwrap().len(), 10);
+
+    // Client can request fewer than the cap
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/search?q=rust&max_results=3")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = json_body(response).await;
+    assert_eq!(body["results"].as_array().unwrap().len(), 3);
+}

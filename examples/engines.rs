@@ -18,23 +18,13 @@ async fn main() -> anyhow::Result<()> {
     // 1. Use dynamic dispatch (dyn) to handle different engine types
     // 2. Map the Option<String> from engine_args to a specific engine
     let engine: Box<dyn SearchEngine> = match engine_name.as_str() {
-        "duckduckgo" => Box::new(DuckDuckGoEngine {
-            client: client.clone(),
-        }),
-        "brave" => Box::new(BraveEngine {
-            client: client.clone(),
-        }),
-        "startpage" => Box::new(StartpageEngine {
-            client: client.clone(),
-        }),
-        "yahoo" => Box::new(YahooEngine {
-            client: client.clone(),
-        }),
+        "duckduckgo" => Box::new(DuckDuckGoEngine::new(client.clone())),
+        "brave" => Box::new(BraveEngine::new(client.clone())),
+        "startpage" => Box::new(StartpageEngine::new(client.clone())),
+        "yahoo" => Box::new(YahooEngine::new(client.clone())),
         _ => {
             println!("Engine not recognized. Defaulting to DuckDuckGo...");
-            Box::new(StartpageEngine {
-                client: client.clone(),
-            })
+            Box::new(StartpageEngine::new(client.clone()))
         }
     };
 
