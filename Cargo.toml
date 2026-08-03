@@ -25,6 +25,7 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"
+cargo-crap = "0.2.1"
 
 [dev-dependencies]
 wiremock = "0.6"

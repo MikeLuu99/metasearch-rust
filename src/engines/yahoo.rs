@@ -26,7 +26,10 @@ pub async fn search(
     )
     .await
     .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-    .map_err(|e| EngineError::Http { engine: ENGINE, source: e })?;
+    .map_err(|e| EngineError::Http {
+        engine: ENGINE,
+        source: e,
+    })?;
 
     if !response.status().is_success() {
         return Err(EngineError::BadStatus {
@@ -48,8 +51,8 @@ fn parse(html: &str, max_results: usize) -> Result<Vec<SearchResult>, EngineErro
 
     let result_sel = sel(ENGINE, "div.algo-sr")?;
     // search.yahoo.com layout: compTitle > a > h3 > span
-    let link_sel   = sel(ENGINE, "div.compTitle a")?;
-    let title_sel  = sel(ENGINE, "div.compTitle a h3 span")?;
+    let link_sel = sel(ENGINE, "div.compTitle a")?;
+    let title_sel = sel(ENGINE, "div.compTitle a h3 span")?;
     let snippet_sel = sel(ENGINE, "div.compText")?;
 
     let mut results = Vec::new();
@@ -81,7 +84,13 @@ fn parse(html: &str, max_results: usize) -> Result<Vec<SearchResult>, EngineErro
         let snippet = element
             .select(&snippet_sel)
             .next()
-            .map(|el| el.text().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" "))
+            .map(|el| {
+                el.text()
+                    .collect::<String>()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
             .filter(|s| !s.is_empty());
 
         results.push(SearchResult {
@@ -136,7 +145,8 @@ mod tests {
 
     #[test]
     fn test_parse_yahoo_url_redirect() {
-        let href = "https://r.search.yahoo.com/_ylt=abc/RU=https%3A%2F%2Fwww.rust-lang.org%2F/RS=xyz";
+        let href =
+            "https://r.search.yahoo.com/_ylt=abc/RU=https%3A%2F%2Fwww.rust-lang.org%2F/RS=xyz";
         assert_eq!(parse_yahoo_url(href), "https://www.rust-lang.org/");
     }
 
@@ -252,7 +262,10 @@ mod tests {
             }
         }
 
-        assert!(!results.is_empty(), "expected at least one result from Yahoo");
+        assert!(
+            !results.is_empty(),
+            "expected at least one result from Yahoo"
+        );
         for r in &results {
             assert!(!r.title.is_empty());
             assert!(r.url.starts_with("http"));

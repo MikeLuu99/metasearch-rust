@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use metadata_search_engine_rs::{
     config::AppConfig,
-    engines::{BraveEngine, DuckDuckGoEngine, SearchEngine, StartpageEngine, YahooEngine, build_http_client},
+    engines::{
+        BraveEngine, DuckDuckGoEngine, SearchEngine, StartpageEngine, YahooEngine,
+        build_http_client,
+    },
     server::{build_router, handlers::AppState},
 };
 
@@ -20,10 +23,18 @@ async fn main() -> anyhow::Result<()> {
     let client = Arc::new(build_http_client()?);
 
     let engines: Vec<Arc<dyn SearchEngine>> = vec![
-        Arc::new(DuckDuckGoEngine { client: Arc::clone(&client) }),
-        Arc::new(BraveEngine     { client: Arc::clone(&client) }),
-        Arc::new(StartpageEngine { client: Arc::clone(&client) }),
-        Arc::new(YahooEngine     { client: Arc::clone(&client) }),
+        Arc::new(DuckDuckGoEngine {
+            client: Arc::clone(&client),
+        }),
+        Arc::new(BraveEngine {
+            client: Arc::clone(&client),
+        }),
+        Arc::new(StartpageEngine {
+            client: Arc::clone(&client),
+        }),
+        Arc::new(YahooEngine {
+            client: Arc::clone(&client),
+        }),
     ];
 
     let state = Arc::new(AppState {
