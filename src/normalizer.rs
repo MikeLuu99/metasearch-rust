@@ -40,12 +40,7 @@ pub fn normalize(raw: &str) -> Option<String> {
     } else {
         let mut sorted = clean;
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
-        let qs = sorted
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join("&");
-        url.set_query(Some(&qs));
+        url.query_pairs_mut().clear().extend_pairs(sorted);
     }
 
     let path = url.path().to_string();
@@ -61,7 +56,10 @@ pub fn normalize(raw: &str) -> Option<String> {
 
     url.set_path(&path);
 
-    Some(url.to_string().to_lowercase())
+    // The url crate already lowercases scheme and host at parse time.
+    // Lowercasing the full string here would merge case-sensitive paths
+    // (e.g. /RustBook vs /rustbook) and query values into one key.
+    Some(url.to_string())
 }
 
 /// Strip a leading locale segment from a URL path.
@@ -88,22 +86,47 @@ fn strip_locale_prefix(path: &str) -> &str {
     }
 }
 
-/// Returns true if `s` looks like a BCP 47 locale code used as a path prefix.
-/// Matches: `en`, `fr`, `en-US`, `en_US`, `zh-CN`, `pt-BR` (2 or 5 chars).
+/// Returns true if `s` is a known locale code used as a path prefix.
+/// Matches 2-letter ISO 639-1 language codes (e.g. `en`, `fr`) and language-region
+/// codes (e.g. `en-US`, `en_US`, `zh-CN`, `pt-BR`) whose language part is a known
+/// code. Anchoring on the ISO list keeps legitimate 2-letter path segments like
+/// `/go` or `/us` from being mistaken for locales.
 fn is_locale_segment(s: &str) -> bool {
     let b = s.as_bytes();
     match b.len() {
-        2 => b[0].is_ascii_alphabetic() && b[1].is_ascii_alphabetic(),
+        2 => is_iso_639_1(s),
         5 => {
             b[0].is_ascii_alphabetic()
                 && b[1].is_ascii_alphabetic()
                 && (b[2] == b'-' || b[2] == b'_')
                 && b[3].is_ascii_alphabetic()
                 && b[4].is_ascii_alphabetic()
+                && is_iso_639_1(&s[..2])
         }
         _ => false,
     }
 }
+
+/// True if `s` is a 2-letter ISO 639-1 language code.
+fn is_iso_639_1(s: &str) -> bool {
+    ISO_639_1.binary_search(&s).is_ok()
+}
+
+// All ISO 639-1 language codes, sorted for binary_search.
+const ISO_639_1: &[&str] = &[
+    "aa", "ab", "ae", "af", "ak", "am", "an", "ar", "as", "av", "ay", "az", "ba", "be", "bg", "bh",
+    "bi", "bm", "bn", "bo", "br", "bs", "ca", "ce", "ch", "co", "cr", "cs", "cu", "cv", "cy", "da",
+    "de", "dv", "dz", "ee", "el", "en", "eo", "es", "et", "eu", "fa", "ff", "fi", "fj", "fo", "fr",
+    "fy", "ga", "gd", "gl", "gn", "gu", "gv", "ha", "he", "hi", "ho", "hr", "ht", "hu", "hy", "hz",
+    "ia", "id", "ie", "ig", "ii", "ik", "io", "is", "it", "iu", "ja", "jv", "ka", "kg", "ki", "kj",
+    "kk", "kl", "km", "kn", "ko", "kr", "ks", "ku", "kv", "kw", "ky", "la", "lb", "lg", "li", "ln",
+    "lo", "lt", "lu", "lv", "mg", "mh", "mi", "mk", "ml", "mn", "mr", "ms", "mt", "my", "na", "nb",
+    "nd", "ne", "ng", "nl", "nn", "no", "nr", "nv", "ny", "oc", "oj", "om", "or", "os", "pa", "pi",
+    "pl", "ps", "pt", "qu", "rm", "rn", "ro", "ru", "rw", "sa", "sc", "sd", "se", "sg", "si", "sk",
+    "sl", "sm", "sn", "so", "sq", "sr", "ss", "st", "su", "sv", "sw", "ta", "te", "tg", "th", "ti",
+    "tk", "tl", "tn", "to", "tr", "ts", "tt", "tw", "ty", "ug", "uk", "ur", "uz", "ve", "vi", "vo",
+    "wa", "wo", "xh", "yi", "yo", "za", "zh", "zu",
+];
 
 /// Strip index filenames so /page/index.html and /page/ produce the same path.
 fn strip_index_file(path: &str) -> &str {
@@ -161,6 +184,20 @@ mod tests {
     }
 
     #[test]
+    fn test_preserves_path_case() {
+        let a = normalize("https://example.com/RustBook").unwrap();
+        let b = normalize("https://example.com/rustbook").unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_preserves_query_value_case() {
+        let a = normalize("https://example.com/?q=RustBook").unwrap();
+        let b = normalize("https://example.com/?q=rustbook").unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
     fn test_returns_none_for_invalid_url() {
         assert!(normalize("not a url").is_none());
     }
@@ -192,6 +229,21 @@ mod tests {
         // so this is left untouched even though "go" is 2 letters
         let n = normalize("https://example.com/go").unwrap();
         assert!(n.contains("/go"));
+    }
+
+    #[test]
+    fn test_does_not_strip_non_locale_segment() {
+        // "go" is not an ISO 639-1 code — a real path segment must survive
+        let n = normalize("https://github.com/go/website").unwrap();
+        assert!(n.contains("/go/"));
+    }
+
+    #[test]
+    fn test_encodes_special_chars_in_query_values() {
+        // A value containing & or = must not merge into separate query params
+        let a = normalize("https://example.com/?a=1%26b%3D2").unwrap();
+        let b = normalize("https://example.com/?a=1&b=2").unwrap();
+        assert_ne!(a, b);
     }
 
     #[test]
