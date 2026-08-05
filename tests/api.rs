@@ -3,9 +3,9 @@ use std::sync::Arc;
 use axum::{body::Body, http::Request};
 use http_body_util::BodyExt;
 use metadata_search_engine_rs::{
-    engines::{BoxFuture, SearchEngine},
+    engines::{BoxFuture, ImageSearchEngine, SearchEngine},
     error::EngineError,
-    models::SearchResult,
+    models::{ImageResult, SearchResult},
     server::{build_router, handlers::AppState},
 };
 use tower::util::ServiceExt;
@@ -55,9 +55,72 @@ fn mock_result(title: &str, url: &str, engine: &str) -> SearchResult {
     }
 }
 
+fn mock_image(title: &str, url: &str, img_src: &str, engine: &str) -> ImageResult {
+    ImageResult {
+        title: title.to_string(),
+        url: url.to_string(),
+        img_src: img_src.to_string(),
+        thumbnail_src: Some(format!("{img_src}.thumb")),
+        source: None,
+        resolution: Some("1920x1080".to_string()),
+        img_format: None,
+        author: None,
+        snippet: None,
+        source_engine: engine.to_string(),
+    }
+}
+
+struct MockImageEngine {
+    name: &'static str,
+    results: Vec<ImageResult>,
+}
+
+impl ImageSearchEngine for MockImageEngine {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn search_images<'a>(
+        &'a self,
+        _query: &'a str,
+        max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<ImageResult>, EngineError>> {
+        let results = self.results.iter().take(max_results).cloned().collect();
+        Box::pin(async move { Ok(results) })
+    }
+}
+
+struct FailingImageEngine;
+
+impl ImageSearchEngine for FailingImageEngine {
+    fn name(&self) -> &'static str {
+        "failing_image"
+    }
+
+    fn search_images<'a>(
+        &'a self,
+        _query: &'a str,
+        _max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<ImageResult>, EngineError>> {
+        Box::pin(async {
+            Err(EngineError::Timeout {
+                engine: "failing_image",
+            })
+        })
+    }
+}
+
 fn build_test_router(engines: Vec<Arc<dyn SearchEngine>>) -> axum::Router {
+    build_test_router_with_images(engines, vec![])
+}
+
+fn build_test_router_with_images(
+    engines: Vec<Arc<dyn SearchEngine>>,
+    image_engines: Vec<Arc<dyn ImageSearchEngine>>,
+) -> axum::Router {
     let state = Arc::new(AppState {
         engines,
+        image_engines,
         results_per_engine: 10,
         max_results: 10,
     });
@@ -248,6 +311,7 @@ async fn test_search_respects_client_max_results_capped_by_config() {
 
     let state = Arc::new(AppState {
         engines,
+        image_engines: vec![],
         results_per_engine: 10,
         max_results: 10,
     });
@@ -280,4 +344,158 @@ async fn test_search_respects_client_max_results_capped_by_config() {
         .unwrap();
     let body = json_body(response).await;
     assert_eq!(body["results"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn test_images_missing_query_returns_400() {
+    let router = build_test_router(vec![]);
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/images")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_images_no_engines_returns_503() {
+    let router = build_test_router(vec![]);
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/images?q=rust")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let body = json_body(response).await;
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("no image engines configured")
+    );
+}
+
+#[tokio::test]
+async fn test_images_all_engines_fail_returns_503() {
+    let router = build_test_router_with_images(vec![], vec![Arc::new(FailingImageEngine)]);
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/images?q=rust")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+}
+
+#[tokio::test]
+async fn test_images_returns_aggregated_image_results() {
+    let image_engines: Vec<Arc<dyn ImageSearchEngine>> = vec![Arc::new(MockImageEngine {
+        name: "engine_a",
+        results: vec![
+            mock_image(
+                "Rust Logo",
+                "https://rust-lang.org/",
+                "https://cdn.rust-lang.org/logo.png",
+                "engine_a",
+            ),
+            mock_image(
+                "Ferris",
+                "https://rust-lang.org/ferris",
+                "https://cdn.rust-lang.org/ferris.png",
+                "engine_a",
+            ),
+        ],
+    })];
+
+    let router = build_test_router_with_images(vec![], image_engines);
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/images?q=rust")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let body = json_body(response).await;
+
+    assert_eq!(body["query"], "rust");
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0]["url"], "https://rust-lang.org/");
+    assert_eq!(results[0]["img_src"], "https://cdn.rust-lang.org/logo.png");
+    assert_eq!(
+        results[0]["thumbnail_src"],
+        "https://cdn.rust-lang.org/logo.png.thumb"
+    );
+    assert_eq!(results[0]["resolution"], "1920x1080");
+    assert_eq!(body["engines_queried"].as_array().unwrap().len(), 1);
+    assert_eq!(body["engines_failed"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_images_deduplicates_across_engines() {
+    let image_engines: Vec<Arc<dyn ImageSearchEngine>> = vec![
+        Arc::new(MockImageEngine {
+            name: "engine_a",
+            results: vec![mock_image(
+                "Rust Logo",
+                "https://rust-lang.org/",
+                "https://cdn.rust-lang.org/logo.png",
+                "engine_a",
+            )],
+        }),
+        Arc::new(MockImageEngine {
+            name: "engine_b",
+            results: vec![mock_image(
+                "Rust Logo",
+                "https://rust-lang.org",
+                "https://cdn.rust-lang.org/logo.png",
+                "engine_b",
+            )],
+        }),
+    ];
+
+    let router = build_test_router_with_images(vec![], image_engines);
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/images?q=rust")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = json_body(response).await;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["engines"].as_array().unwrap().len(), 2);
 }

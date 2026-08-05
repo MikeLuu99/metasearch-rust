@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use futures::future::join_all;
 
-use crate::engines::SearchEngine;
+use crate::engines::{ImageSearchEngine, SearchEngine};
 use crate::error::EngineError;
-use crate::models::{AggregatedResult, SearchResult};
+use crate::models::{AggregatedImageResult, AggregatedResult, ImageResult, SearchResult};
 use crate::normalizer;
 
 // Standard RRF constant from the original paper (Cormack et al., 2009).
@@ -110,6 +110,117 @@ pub fn aggregate(
     ranked
 }
 
+/// Fan out a query to all image engines concurrently.
+///
+/// Same partial-failure semantics as [`query_all_engines`].
+pub async fn query_all_image_engines(
+    engines: &[Arc<dyn ImageSearchEngine>],
+    query: &str,
+    max_results: usize,
+) -> (Vec<(String, Vec<ImageResult>)>, Vec<(String, EngineError)>) {
+    let futures: Vec<_> = engines
+        .iter()
+        .map(|engine| {
+            let engine = Arc::clone(engine);
+            let query = query.to_string();
+            async move {
+                let result = engine.search_images(&query, max_results).await;
+                (engine.name().to_string(), result)
+            }
+        })
+        .collect();
+
+    let outcomes = join_all(futures).await;
+
+    let mut successes = Vec::new();
+    let mut failures = Vec::new();
+
+    for (name, result) in outcomes {
+        match result {
+            Ok(results) => successes.push((name, results)),
+            Err(e) => failures.push((name, e)),
+        }
+    }
+
+    (successes, failures)
+}
+
+/// Deduplicate and rank image results across engines using RRF.
+///
+/// Image identity is the hosting page (normalized) *plus* the image file URL,
+/// mirroring SearXNG's `template|url|img_src` image result hash: two results
+/// from the same page but different images are distinct.
+pub fn aggregate_images(
+    engine_results: Vec<(String, Vec<ImageResult>)>,
+    max_results: usize,
+) -> Vec<AggregatedImageResult> {
+    let mut map: HashMap<String, AggregatedImageResult> = HashMap::new();
+
+    for (engine_name, results) in engine_results {
+        for (index, result) in results.into_iter().enumerate() {
+            let rank = index + 1; // 1-indexed for RRF
+            let rrf_score = 1.0 / (RRF_K + rank as f64);
+
+            let key = match image_key(&result) {
+                Some(k) => k,
+                None => continue, // skip results with unparseable URLs
+            };
+
+            match map.get_mut(&key) {
+                Some(existing) => {
+                    existing.score += rrf_score;
+                    if !existing.engines.contains(&engine_name) {
+                        existing.engines.push(engine_name.clone());
+                    }
+                    // Fill in metadata missing from the first-seen result
+                    if existing.thumbnail_src.is_none() {
+                        existing.thumbnail_src = result.thumbnail_src;
+                    }
+                    if existing.source.is_none() {
+                        existing.source = result.source;
+                    }
+                    if existing.resolution.is_none() {
+                        existing.resolution = result.resolution;
+                    }
+                }
+                None => {
+                    map.insert(
+                        key,
+                        AggregatedImageResult {
+                            title: result.title,
+                            url: result.url,
+                            img_src: result.img_src,
+                            thumbnail_src: result.thumbnail_src,
+                            source: result.source,
+                            resolution: result.resolution,
+                            engines: vec![engine_name.clone()],
+                            score: rrf_score,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    let mut ranked: Vec<AggregatedImageResult> = map.into_values().collect();
+
+    // Primary: score descending. Secondary: title ascending for stable ordering on ties.
+    ranked.sort_unstable_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.title.cmp(&b.title))
+    });
+
+    ranked.truncate(max_results);
+    ranked
+}
+
+fn image_key(result: &ImageResult) -> Option<String> {
+    let page = normalizer::normalize(&result.url)?;
+    Some(format!("{page}|{}", result.img_src))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +229,21 @@ mod tests {
         SearchResult {
             title: title.to_string(),
             url: url.to_string(),
+            snippet: None,
+            source_engine: engine.to_string(),
+        }
+    }
+
+    fn make_image(url: &str, img_src: &str, engine: &str, title: &str) -> ImageResult {
+        ImageResult {
+            title: title.to_string(),
+            url: url.to_string(),
+            img_src: img_src.to_string(),
+            thumbnail_src: None,
+            source: None,
+            resolution: None,
+            img_format: None,
+            author: None,
             snippet: None,
             source_engine: engine.to_string(),
         }
@@ -239,6 +365,94 @@ mod tests {
         let results = aggregate(engine_results, 10);
 
         assert_eq!(results[0].snippet, Some("A useful snippet.".to_string()));
+    }
+
+    #[test]
+    fn test_image_dedup_by_page_and_img_src() {
+        let engine_results = vec![
+            (
+                "ddg".to_string(),
+                vec![make_image(
+                    "https://example.com/page",
+                    "https://cdn.com/a.jpg",
+                    "ddg",
+                    "A",
+                )],
+            ),
+            (
+                "bing".to_string(),
+                vec![make_image(
+                    "https://example.com/page/",
+                    "https://cdn.com/a.jpg",
+                    "bing",
+                    "A",
+                )],
+            ),
+        ];
+        let results = aggregate_images(engine_results, 10);
+
+        // Trailing slash normalized — one merged result from both engines
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].engines.len(), 2);
+        let expected = 2.0 / 61.0;
+        assert!((results[0].score - expected).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_same_page_different_image_not_merged() {
+        let engine_results = vec![
+            (
+                "ddg".to_string(),
+                vec![make_image(
+                    "https://example.com/page",
+                    "https://cdn.com/a.jpg",
+                    "ddg",
+                    "A",
+                )],
+            ),
+            (
+                "bing".to_string(),
+                vec![make_image(
+                    "https://example.com/page",
+                    "https://cdn.com/b.jpg",
+                    "bing",
+                    "B",
+                )],
+            ),
+        ];
+        let results = aggregate_images(engine_results, 10);
+
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_image_rrf_rank1_beats_rank2() {
+        let engine_results = vec![(
+            "ddg".to_string(),
+            vec![
+                make_image("https://page1.com", "https://cdn1.com/i.jpg", "ddg", "One"),
+                make_image("https://page2.com", "https://cdn2.com/i.jpg", "ddg", "Two"),
+            ],
+        )];
+        let results = aggregate_images(engine_results, 10);
+
+        assert_eq!(results[0].url, "https://page1.com");
+        assert!(results[0].score > results[1].score);
+    }
+
+    #[test]
+    fn test_image_skips_unparseable_page_url() {
+        let engine_results = vec![(
+            "ddg".to_string(),
+            vec![
+                make_image("not a url", "https://cdn.com/i.jpg", "ddg", "Bad"),
+                make_image("https://valid.com", "https://cdn.com/i.jpg", "ddg", "Good"),
+            ],
+        )];
+        let results = aggregate_images(engine_results, 10);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://valid.com");
     }
 
     #[tokio::test]

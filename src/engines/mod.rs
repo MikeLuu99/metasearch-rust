@@ -1,5 +1,8 @@
+pub mod bing_images;
 pub mod brave;
+pub mod ddg_images;
 pub mod duckduckgo;
+pub mod google_images;
 pub mod startpage;
 pub mod yahoo;
 
@@ -14,7 +17,7 @@ use reqwest::{
 };
 
 use crate::error::EngineError;
-use crate::models::SearchResult;
+use crate::models::{ImageResult, SearchResult};
 
 // A heap-allocated future that is Send — required for dyn trait + tokio multi-thread.
 // Using BoxFuture keeps the trait object-safe; impl Future in trait methods is not.
@@ -28,6 +31,21 @@ pub trait SearchEngine: Send + Sync {
         query: &'a str,
         max_results: usize,
     ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>>;
+}
+
+/// An engine that returns image results.
+///
+/// Mirrors SearXNG's `categories = ["images"]` engines: results carry the
+/// hosting page URL (`url`), the full image (`img_src`) and a preview
+/// (`thumbnail_src`) — the three distinct URLs every image engine extracts.
+pub trait ImageSearchEngine: Send + Sync {
+    fn name(&self) -> &'static str;
+
+    fn search_images<'a>(
+        &'a self,
+        query: &'a str,
+        max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<ImageResult>, EngineError>>;
 }
 
 // Default per-query timeout applied to every engine unless overridden via
@@ -54,6 +72,21 @@ pub struct YahooEngine {
     pub timeout: Duration,
 }
 
+pub struct DuckDuckGoImagesEngine {
+    pub client: Arc<Client>,
+    pub timeout: Duration,
+}
+
+pub struct BingImagesEngine {
+    pub client: Arc<Client>,
+    pub timeout: Duration,
+}
+
+pub struct GoogleImagesEngine {
+    pub client: Arc<Client>,
+    pub timeout: Duration,
+}
+
 macro_rules! impl_engine_constructors {
     ($($engine:ident),+ $(,)?) => {
         $(
@@ -70,7 +103,15 @@ macro_rules! impl_engine_constructors {
     };
 }
 
-impl_engine_constructors!(DuckDuckGoEngine, BraveEngine, StartpageEngine, YahooEngine,);
+impl_engine_constructors!(
+    DuckDuckGoEngine,
+    BraveEngine,
+    StartpageEngine,
+    YahooEngine,
+    DuckDuckGoImagesEngine,
+    BingImagesEngine,
+    GoogleImagesEngine,
+);
 
 impl SearchEngine for DuckDuckGoEngine {
     fn name(&self) -> &'static str {
@@ -140,6 +181,63 @@ impl SearchEngine for YahooEngine {
         max_results: usize,
     ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
         Box::pin(yahoo::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
+    }
+}
+
+impl ImageSearchEngine for DuckDuckGoImagesEngine {
+    fn name(&self) -> &'static str {
+        "duckduckgo"
+    }
+
+    fn search_images<'a>(
+        &'a self,
+        query: &'a str,
+        max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<ImageResult>, EngineError>> {
+        Box::pin(ddg_images::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
+    }
+}
+
+impl ImageSearchEngine for BingImagesEngine {
+    fn name(&self) -> &'static str {
+        "bing"
+    }
+
+    fn search_images<'a>(
+        &'a self,
+        query: &'a str,
+        max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<ImageResult>, EngineError>> {
+        Box::pin(bing_images::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
+    }
+}
+
+impl ImageSearchEngine for GoogleImagesEngine {
+    fn name(&self) -> &'static str {
+        "google"
+    }
+
+    fn search_images<'a>(
+        &'a self,
+        query: &'a str,
+        max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<ImageResult>, EngineError>> {
+        Box::pin(google_images::search(
             &self.client,
             query,
             max_results,
