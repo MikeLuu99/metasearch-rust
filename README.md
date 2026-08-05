@@ -1,6 +1,6 @@
 # metasearch-rs
 
-A SearXNG-style metadata search engine written in Rust. Fans out queries to multiple search engines concurrently, scrapes their HTML results, deduplicates by normalized URL, and ranks using Reciprocal Rank Fusion (RRF).
+A SearXNG-style metadata search engine written in Rust. Fans out queries to multiple search engines concurrently, scrapes their HTML results, deduplicates by normalized URL, and ranks using Reciprocal Rank Fusion (RRF). Also supports image search through a dedicated `/images` endpoint.
 
 ## How it works
 
@@ -10,6 +10,8 @@ A SearXNG-style metadata search engine written in Rust. Fans out queries to mult
 4. Results are deduplicated by normalized URL (tracking params stripped, locale prefixes removed, query params sorted)
 5. Duplicate URLs are merged and scored with RRF (`score = Σ 1/(60 + rank)` across engines) — pages returned by multiple engines rank higher
 6. The top results are returned as JSON
+
+Image search follows the same pipeline on `GET /images?q=<query>`: the query is fanned out to image engines (currently Bing Images via its `/images/async` endpoint), results carry the hosting page URL, the full image URL and a thumbnail preview, and are deduplicated by `normalized page URL + image URL` before RRF ranking.
 
 ## Requirements
 
@@ -184,9 +186,39 @@ curl "http://localhost:3000/search?q=rust"
 
 | Case             | Status | Body                                               |
 | ---------------- | ------ | -------------------------------------------------- |
-| Missing `q`      | 400    | `{"error": "query parameter 'q' is required"}`     |
+| Missing `q`      | 400    | `{"error": "invalid query parameters"}`              |
 | Empty `q`        | 400    | `{"error": "query parameter 'q' cannot be empty"}` |
 | All engines fail | 503    | `{"error": "all engines failed to respond"}`       |
+
+### `GET /images?q=<query>`
+
+```bash
+curl "http://localhost:3000/images?q=rust%20logo"
+```
+
+```json
+{
+  "query": "rust logo",
+  "results": [
+    {
+      "title": "Rust Logo",
+      "url": "https://rust-lang.org/",
+      "img_src": "https://cdn.rust-lang.org/logo.png",
+      "thumbnail_src": "https://cdn.rust-lang.org/thumb.png",
+      "source": "rust-lang.org",
+      "resolution": "3840x2160",
+      "engines": ["bing"],
+      "score": 0.049
+    }
+  ],
+  "engines_queried": ["bing"],
+  "engines_failed": []
+}
+```
+
+`url` is the page hosting the image, `img_src` is the full-resolution image file, and `thumbnail_src` is a smaller preview. Image results are deduplicated by normalized hosting page URL + `img_src`, mirroring SearXNG's `template|url|img_src` image result hash.
+
+**Error responses:** same semantics as `/search`, plus 503 `{"error": "no image engines configured"}` when no image engines are wired in.
 
 ## Tests
 
