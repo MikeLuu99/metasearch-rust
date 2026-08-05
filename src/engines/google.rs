@@ -19,6 +19,11 @@ const GOOGLE_URL: &str = "https://www.google.com/search";
 /// The title lives in a `div[style]` inside the anchor, the URL is the `href`
 /// (a `/url?q=<encoded>` redirect that must be unwrapped) and the snippet sits
 /// in a `div.ilUpNd.H66NU.aSRlid` two levels above the anchor.
+///
+/// TODO(testing): Google serves a JS-redirect stub page ("Please click here if
+/// you are not redirected...") to datacenter IPs, so this currently returns
+/// Ok(empty) from this IP and `test_live_search` fails there. The parser can
+/// only be validated from a residential IP — run the live test there.
 pub async fn search(
     client: &Client,
     query: &str,
@@ -67,6 +72,12 @@ pub async fn search(
 /// Google answers bot-detection by redirecting to a `sorry`/CAPTCHA page; the
 /// redirect is followed by the client, so check where we ended up (mirrors
 /// SearXNG's `detect_google_sorry`).
+///
+/// TODO(bug): the JS-redirect stub page ("Please click here if you are not
+/// redirected...") is a 200 with no `/sorry` marker, so it is NOT caught here —
+/// it falls through to `parse` and yields Ok(empty). Consider detecting it
+/// (marker text in a ~90KB body) so it surfaces as an error instead of a
+/// silent empty result.
 fn detect_google_sorry(response: &reqwest::Response) -> Result<(), EngineError> {
     let url = response.url();
     if url.host_str() == Some("sorry.google.com") || url.path().starts_with("/sorry") {
@@ -270,6 +281,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_live_search() {
+        // TODO(testing): fails from datacenter IPs (Google JS-gated stub page,
+        // Ok(empty)); run from a residential IP to validate the selectors.
         let client = crate::engines::build_http_client().unwrap();
         let results = search(
             &client,
