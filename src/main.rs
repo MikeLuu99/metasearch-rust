@@ -3,8 +3,8 @@ use std::sync::Arc;
 use metadata_search_engine_rs::{
     config::AppConfig,
     engines::{
-        BingImagesEngine, BraveEngine, DuckDuckGoEngine, GoogleImagesEngine, ImageSearchEngine,
-        SearchEngine, StartpageEngine, YahooEngine, build_http_client,
+        BingImagesEngine, BraveEngine, DuckDuckGoEngine, GoogleEngine, GoogleImagesEngine,
+        ImageSearchEngine, SearchEngine, StartpageEngine, YahooEngine, build_http_client,
     },
     server::{build_router, handlers::AppState},
 };
@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
 
     let timeout = std::time::Duration::from_millis(config.engine_timeout_ms);
     let engines: Vec<Arc<dyn SearchEngine>> = vec![
+        Arc::new(GoogleEngine::with_timeout(Arc::clone(&client), timeout)),
         Arc::new(DuckDuckGoEngine::with_timeout(Arc::clone(&client), timeout)),
         Arc::new(BraveEngine::with_timeout(Arc::clone(&client), timeout)),
         Arc::new(StartpageEngine::with_timeout(Arc::clone(&client), timeout)),

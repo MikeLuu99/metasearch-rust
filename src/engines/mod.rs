@@ -2,6 +2,7 @@ pub mod bing_images;
 pub mod brave;
 pub mod ddg_images;
 pub mod duckduckgo;
+pub mod google;
 pub mod google_images;
 pub mod startpage;
 pub mod yahoo;
@@ -87,6 +88,11 @@ pub struct GoogleImagesEngine {
     pub timeout: Duration,
 }
 
+pub struct GoogleEngine {
+    pub client: Arc<Client>,
+    pub timeout: Duration,
+}
+
 macro_rules! impl_engine_constructors {
     ($($engine:ident),+ $(,)?) => {
         $(
@@ -111,7 +117,27 @@ impl_engine_constructors!(
     DuckDuckGoImagesEngine,
     BingImagesEngine,
     GoogleImagesEngine,
+    GoogleEngine,
 );
+
+impl SearchEngine for GoogleEngine {
+    fn name(&self) -> &'static str {
+        "google"
+    }
+
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
+        Box::pin(google::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
+    }
+}
 
 impl SearchEngine for DuckDuckGoEngine {
     fn name(&self) -> &'static str {

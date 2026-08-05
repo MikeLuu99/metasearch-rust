@@ -20,6 +20,12 @@ pub enum EngineError {
         engine: &'static str,
         reason: String,
     },
+
+    #[error("engine '{engine}' blocked: {reason}")]
+    Blocked {
+        engine: &'static str,
+        reason: String,
+    },
 }
 
 /// Axum handler error — wraps anyhow for flexibility at the HTTP boundary.
