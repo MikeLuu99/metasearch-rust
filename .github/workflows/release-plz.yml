@@ -4,18 +4,16 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
   workflow_dispatch:
 
 jobs:
-  # Publish the package to crates.io only when a version tag (vX.Y.Z) is
-  # pushed. Plain pushes to main do NOT publish. The tag must be created by a
-  # human: GitHub Actions does not trigger on tags it creates itself.
+  # Publish the package when a new version is detected (i.e. after the
+  # `chore: release` PR is merged). release-plz creates the tag, publishes to
+  # crates.io and creates the GitHub release. No-op on ordinary pushes.
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'MikeLuu99' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ github.repository_owner == 'MikeLuu99' }}
     permissions:
       contents: write
       pull-requests: read
@@ -35,11 +33,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  # On every push to main without a tag, only prepare the next release.
+  # Create/update the PR with the new version and changelog, preparing the
+  # next release.
   release-plz-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'MikeLuu99' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository_owner == 'MikeLuu99' }}
     permissions:
       contents: write
       pull-requests: write
