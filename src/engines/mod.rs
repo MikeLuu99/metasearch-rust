@@ -3,6 +3,7 @@ pub mod brave;
 pub mod ddg_images;
 pub mod duckduckgo;
 pub mod google_images;
+pub mod sogou_images;
 pub mod startpage;
 pub mod yahoo;
 
@@ -87,6 +88,11 @@ pub struct GoogleImagesEngine {
     pub timeout: Duration,
 }
 
+pub struct SogouImagesEngine {
+    pub client: Arc<Client>,
+    pub timeout: Duration,
+}
+
 macro_rules! impl_engine_constructors {
     ($($engine:ident),+ $(,)?) => {
         $(
@@ -111,6 +117,7 @@ impl_engine_constructors!(
     DuckDuckGoImagesEngine,
     BingImagesEngine,
     GoogleImagesEngine,
+    SogouImagesEngine,
 );
 
 impl SearchEngine for DuckDuckGoEngine {
@@ -238,6 +245,25 @@ impl ImageSearchEngine for GoogleImagesEngine {
         max_results: usize,
     ) -> BoxFuture<'a, Result<Vec<ImageResult>, EngineError>> {
         Box::pin(google_images::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
+    }
+}
+
+impl ImageSearchEngine for SogouImagesEngine {
+    fn name(&self) -> &'static str {
+        "sogou"
+    }
+
+    fn search_images<'a>(
+        &'a self,
+        query: &'a str,
+        max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<ImageResult>, EngineError>> {
+        Box::pin(sogou_images::search(
             &self.client,
             query,
             max_results,

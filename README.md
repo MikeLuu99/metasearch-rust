@@ -11,7 +11,7 @@ A SearXNG-style metadata search engine written in Rust. Fans out queries to mult
 5. Duplicate URLs are merged and scored with RRF (`score = Σ 1/(60 + rank)` across engines) — pages returned by multiple engines rank higher
 6. The top results are returned as JSON
 
-Image search follows the same pipeline on `GET /images?q=<query>`: the query is fanned out to image engines (currently Bing Images via its `/images/async` endpoint and Google Images via its internal `async=_fmt:json` API), results carry the hosting page URL, the full image URL and a thumbnail preview, and are deduplicated by `normalized page URL + image URL` before RRF ranking.
+Image search follows the same pipeline on `GET /images?q=<query>`: the query is fanned out to image engines (Bing Images via its `/images/async` endpoint, Google Images via its internal `async=_fmt:json` API, and Sogou Images via its embedded `__INITIAL_STATE__` JSON), results carry the hosting page URL, the full image URL and a thumbnail preview, and are deduplicated by `normalized page URL + image URL` before RRF ranking.
 
 ## Requirements
 
@@ -207,11 +207,11 @@ curl "http://localhost:3000/images?q=rust%20logo"
       "thumbnail_src": "https://cdn.rust-lang.org/thumb.png",
       "source": "rust-lang.org",
       "resolution": "3840x2160",
-      "engines": ["bing", "google"],
+      "engines": ["bing", "google", "sogou"],
       "score": 0.049
     }
   ],
-  "engines_queried": ["bing", "google"],
+  "engines_queried": ["bing", "google", "sogou"],
   "engines_failed": []
 }
 ```
