@@ -1,4 +1,4 @@
-# metasearch-engine-rs
+# metasearch-rs
 
 A SearXNG-style metadata search engine written in Rust. Fans out queries to multiple search engines concurrently, scrapes their HTML results, deduplicates by normalized URL, and ranks using Reciprocal Rank Fusion (RRF).
 
