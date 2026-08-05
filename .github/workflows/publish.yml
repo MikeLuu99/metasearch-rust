@@ -28,11 +28,7 @@ jobs:
     name: Publish to crates.io
     needs: check
     runs-on: ubuntu-latest
-    # id-token: write lets GitHub issue an OIDC token that crates.io exchanges
-    # for a short-lived publishing token (trusted publishing) — no long-lived
-    # API token is stored in repository secrets.
     permissions:
-      id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v4
@@ -52,11 +48,7 @@ jobs:
       - name: Dry run
         run: cargo publish --dry-run
 
-      - name: Authenticate with crates.io (trusted publishing)
-        id: auth
-        uses: rust-lang/crates-io-auth-action@v1
-
       - name: Publish
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish
