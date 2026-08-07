@@ -25,6 +25,7 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"
+moka = { version = "0.12", features = ["future"] }
 
 [dev-dependencies]
 wiremock = "0.6"

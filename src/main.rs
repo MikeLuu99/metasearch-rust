@@ -1,6 +1,8 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use metadata_search_engine_rs::{
+    cache::{EngineLimits, build_response_cache},
     config::AppConfig,
     engines::{
         BingImagesEngine, BraveEngine, DuckDuckGoEngine, GoogleImagesEngine, ImageSearchEngine,
@@ -47,6 +49,12 @@ async fn main() -> anyhow::Result<()> {
         image_engines,
         results_per_engine: config.results_per_engine,
         max_results: config.max_results,
+        cache: (config.cache_ttl_ms > 0)
+            .then(|| build_response_cache(Duration::from_millis(config.cache_ttl_ms))),
+        engine_limits: EngineLimits::new(
+            config.engine_max_concurrency,
+            Duration::from_millis(config.engine_cooldown_ms),
+        ),
     });
 
     let router = build_router(state);
