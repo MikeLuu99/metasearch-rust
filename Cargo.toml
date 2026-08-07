@@ -9,6 +9,9 @@ repository = "https://github.com/MikeLuu99/metasearch-rust"
 readme = "README.md"
 keywords = ["metadata", "search", "engine", "scraper", "searxng"]
 categories = ["api-bindings", "algorithms"]
+# Dev-only tooling (Locust load tests) lives in the repo but is not part of
+# the published crate.
+exclude = ["loadtest/**"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

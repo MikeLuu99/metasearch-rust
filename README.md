@@ -220,6 +220,28 @@ curl "http://localhost:3000/images?q=rust%20logo"
 
 **Error responses:** same semantics as `/search`, plus 503 `{"error": "no image engines configured"}` when no image engines are wired in.
 
+## Load testing
+
+A [Locust](https://locust.io/) load test lives in `loadtest/` (excluded from
+the published crate). [uv](https://docs.astral.sh/uv/) manages its deps.
+
+> ⚠️ `/search` and `/images` hit real upstream engines — keep the user count
+> modest to avoid rate-limiting your IP. The response cache (`CACHE_TTL_MS`)
+> and `ENGINE_MAX_CONCURRENCY` reduce upstream load.
+
+```bash
+cargo run --release                     # 1. start the server
+cd loadtest && uv sync && cd ..         # 2. install deps (first time)
+
+# 3. Web UI (localhost:8089), or headless:
+uv run --directory loadtest locust -f locustfile.py --config locust.conf
+uv run --directory loadtest locust -f locustfile.py --headless \
+    --host http://localhost:3000 --users 50 --spawn-rate 5 --run-time 2m
+```
+
+Task mix is 70% `/search`, 20% `/images`, 10% `/health`; queries are sampled
+from `loadtest/queries.txt`. Add `--csv results` for CSV output.
+
 ## Tests
 
 ```bash
