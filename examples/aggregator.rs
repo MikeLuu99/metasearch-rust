@@ -1,7 +1,7 @@
-/// Run with: cargo run --example aggregator -- "your query"
-///
-/// Fans out the query to all engines concurrently, then prints the
-/// RRF-ranked aggregated results alongside which engines returned each URL.
+//! Run with: cargo run --example aggregator -- "your query"
+//!
+//! Fans out the query to all engines concurrently, then prints the
+//! RRF-ranked aggregated results alongside which engines returned each URL.
 use std::sync::Arc;
 
 use metadata_search_engine_rs::{

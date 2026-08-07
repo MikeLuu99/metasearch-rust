@@ -1,3 +1,16 @@
+//! Run a single search engine from the CLI.
+//!
+//! Usage: `cargo run --example engines [engine] [query]`
+//!
+//! Supported engines: `duckduckgo`, `brave`, `startpage`, `yahoo`
+//!
+//! Examples:
+//!   cargo run --example engines duckduckgo
+//!   cargo run --example engines brave "rust programming"
+//!
+//! Unrecognized engine names fall back to Startpage. Results are printed with
+//! title, URL and a truncated snippet.
+
 use metadata_search_engine_rs::engines::{
     BraveEngine, DuckDuckGoEngine, SearchEngine, StartpageEngine, YahooEngine, build_http_client,
 };
