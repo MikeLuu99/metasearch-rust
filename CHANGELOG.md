@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/MikeLuu99/metasearch-rust/compare/v0.2.1...v0.3.0) - 2026-08-07
+
+### Other
+
+- add locust load test harness
+- add response cache, single-flight, and per-engine flow control
+- add run instructions to examples
+- auto-publish on release PR merge (release-plz default)
+- publish only on version tag push
+
 ## [0.2.1](https://github.com/MikeLuu99/metasearch-rust/compare/v0.2.0...v0.2.1) - 2026-08-05
 
 ### Added
