@@ -5,8 +5,11 @@ use axum::{
 };
 use std::sync::Arc;
 
+use moka::future::Cache;
+
 use crate::{
     aggregator::{aggregate, aggregate_images, query_all_engines, query_all_image_engines},
+    cache::{CachedResponse, EngineLimits},
     engines::{ImageSearchEngine, SearchEngine},
     error::AppError,
     models::{ImageSearchResponse, SearchQuery, SearchResponse},
@@ -17,6 +20,9 @@ pub struct AppState {
     pub image_engines: Vec<Arc<dyn ImageSearchEngine>>,
     pub results_per_engine: usize,
     pub max_results: usize,
+    /// TTL response cache keyed by normalized query; `None` disables caching.
+    pub cache: Option<Cache<String, CachedResponse>>,
+    pub engine_limits: EngineLimits,
 }
 
 pub async fn health() -> Json<serde_json::Value> {
@@ -47,33 +53,29 @@ pub async fn search(
         .min(state.max_results)
         .max(1);
 
-    let (successes, failures) =
-        query_all_engines(&state.engines, &query, state.results_per_engine).await;
+    // Case-insensitive key; `max_results` is part of the key because the
+    // aggregated response is truncated by it.
+    let key = format!("search:{max_results}:{}", query.to_lowercase());
 
-    let engines_queried: Vec<String> = state.engines.iter().map(|e| e.name().to_string()).collect();
-    let engines_failed: Vec<String> = failures.iter().map(|(name, _)| name.clone()).collect();
+    if let Some(cache) = &state.cache {
+        let cached = cache
+            .entry_by_ref(&key)
+            .or_try_insert_with(async {
+                run_search(&state, &query, max_results)
+                    .await
+                    .map(CachedResponse::Search)
+            })
+            .await?
+            .into_value();
 
-    for (name, err) in &failures {
-        tracing::warn!(engine = %name, error = %err, "engine query failed");
+        return match cached {
+            CachedResponse::Search(response) => Ok((StatusCode::OK, Json(response))),
+            CachedResponse::Image(_) => unreachable!("'search:' key cannot hold an image response"),
+        };
     }
 
-    if successes.is_empty() {
-        return Err(AppError::service_unavailable(
-            "all engines failed to respond",
-        ));
-    }
-
-    let results = aggregate(successes, max_results);
-
-    Ok((
-        StatusCode::OK,
-        Json(SearchResponse {
-            query,
-            results,
-            engines_queried,
-            engines_failed,
-        }),
-    ))
+    let response = run_search(&state, &query, max_results).await?;
+    Ok((StatusCode::OK, Json(response)))
 }
 
 pub async fn search_images(
@@ -104,8 +106,79 @@ pub async fn search_images(
         .min(state.max_results)
         .max(1);
 
-    let (successes, failures) =
-        query_all_image_engines(&state.image_engines, &query, state.results_per_engine).await;
+    let key = format!("images:{max_results}:{}", query.to_lowercase());
+
+    if let Some(cache) = &state.cache {
+        let cached = cache
+            .entry_by_ref(&key)
+            .or_try_insert_with(async {
+                run_image_search(&state, &query, max_results)
+                    .await
+                    .map(CachedResponse::Image)
+            })
+            .await?
+            .into_value();
+
+        return match cached {
+            CachedResponse::Image(response) => Ok((StatusCode::OK, Json(response))),
+            CachedResponse::Search(_) => {
+                unreachable!("'images:' key cannot hold a search response")
+            }
+        };
+    }
+
+    let response = run_image_search(&state, &query, max_results).await?;
+    Ok((StatusCode::OK, Json(response)))
+}
+
+async fn run_search(
+    state: &AppState,
+    query: &str,
+    max_results: usize,
+) -> Result<SearchResponse, AppError> {
+    let (successes, failures) = query_all_engines(
+        &state.engines,
+        &state.engine_limits,
+        query,
+        state.results_per_engine,
+    )
+    .await;
+
+    let engines_queried: Vec<String> = state.engines.iter().map(|e| e.name().to_string()).collect();
+    let engines_failed: Vec<String> = failures.iter().map(|(name, _)| name.clone()).collect();
+
+    for (name, err) in &failures {
+        tracing::warn!(engine = %name, error = %err, "engine query failed");
+    }
+
+    if successes.is_empty() {
+        return Err(AppError::service_unavailable(
+            "all engines failed to respond",
+        ));
+    }
+
+    let results = aggregate(successes, max_results);
+
+    Ok(SearchResponse {
+        query: query.to_string(),
+        results,
+        engines_queried,
+        engines_failed,
+    })
+}
+
+async fn run_image_search(
+    state: &AppState,
+    query: &str,
+    max_results: usize,
+) -> Result<ImageSearchResponse, AppError> {
+    let (successes, failures) = query_all_image_engines(
+        &state.image_engines,
+        &state.engine_limits,
+        query,
+        state.results_per_engine,
+    )
+    .await;
 
     let engines_queried: Vec<String> = state
         .image_engines
@@ -126,13 +199,10 @@ pub async fn search_images(
 
     let results = aggregate_images(successes, max_results);
 
-    Ok((
-        StatusCode::OK,
-        Json(ImageSearchResponse {
-            query,
-            results,
-            engines_queried,
-            engines_failed,
-        }),
-    ))
+    Ok(ImageSearchResponse {
+        query: query.to_string(),
+        results,
+        engines_queried,
+        engines_failed,
+    })
 }

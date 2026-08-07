@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use futures::future::join_all;
 
+use crate::cache::EngineLimits;
 use crate::engines::{ImageSearchEngine, SearchEngine};
 use crate::error::EngineError;
 use crate::models::{AggregatedImageResult, AggregatedResult, ImageResult, SearchResult};
@@ -19,6 +20,7 @@ const RRF_K: f64 = 60.0;
 /// so the caller can include both in the response without aborting on partial failure.
 pub async fn query_all_engines(
     engines: &[Arc<dyn SearchEngine>],
+    limits: &EngineLimits,
     query: &str,
     max_results: usize,
 ) -> (Vec<(String, Vec<SearchResult>)>, Vec<(String, EngineError)>) {
@@ -28,8 +30,20 @@ pub async fn query_all_engines(
             let engine = Arc::clone(engine);
             let query = query.to_string();
             async move {
-                let result = engine.search(&query, max_results).await;
-                (engine.name().to_string(), result)
+                let name = engine.name();
+                let result = match limits.acquire(name).await {
+                    Ok(_permit) => {
+                        let res = engine.search(&query, max_results).await;
+                        // Only a real failure cools the engine down; a cooldown
+                        // skip defers the next attempt instead of pushing it out.
+                        if res.is_err() {
+                            limits.record_failure(name);
+                        }
+                        res
+                    }
+                    Err(e) => Err(e),
+                };
+                (name.to_string(), result)
             }
         })
         .collect();
@@ -115,6 +129,7 @@ pub fn aggregate(
 /// Same partial-failure semantics as [`query_all_engines`].
 pub async fn query_all_image_engines(
     engines: &[Arc<dyn ImageSearchEngine>],
+    limits: &EngineLimits,
     query: &str,
     max_results: usize,
 ) -> (Vec<(String, Vec<ImageResult>)>, Vec<(String, EngineError)>) {
@@ -124,8 +139,18 @@ pub async fn query_all_image_engines(
             let engine = Arc::clone(engine);
             let query = query.to_string();
             async move {
-                let result = engine.search_images(&query, max_results).await;
-                (engine.name().to_string(), result)
+                let name = engine.name();
+                let result = match limits.acquire(name).await {
+                    Ok(_permit) => {
+                        let res = engine.search_images(&query, max_results).await;
+                        if res.is_err() {
+                            limits.record_failure(name);
+                        }
+                        res
+                    }
+                    Err(e) => Err(e),
+                };
+                (name.to_string(), result)
             }
         })
         .collect();
@@ -468,8 +493,13 @@ mod tests {
             Arc::new(StartpageEngine::new(Arc::clone(&client))),
         ];
 
-        let (successes, failures) =
-            query_all_engines(&engines, "rust programming language", 10).await;
+        let (successes, failures) = query_all_engines(
+            &engines,
+            &EngineLimits::default(),
+            "rust programming language",
+            10,
+        )
+        .await;
 
         println!("Engines succeeded: {}", successes.len());
         println!("Engines failed:    {}", failures.len());

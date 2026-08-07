@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use metadata_search_engine_rs::{
     aggregator::{aggregate, query_all_engines},
+    cache::EngineLimits,
     engines::{
         BraveEngine, DuckDuckGoEngine, SearchEngine, StartpageEngine, YahooEngine,
         build_http_client,
@@ -31,7 +32,13 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(YahooEngine::new(Arc::clone(&client))),
     ];
 
-    let (successes, failures) = query_all_engines(&engines, &query, results_per_engine).await;
+    let (successes, failures) = query_all_engines(
+        &engines,
+        &EngineLimits::default(),
+        &query,
+        results_per_engine,
+    )
+    .await;
 
     if !failures.is_empty() {
         println!("Failed engines:");

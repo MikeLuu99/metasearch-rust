@@ -5,6 +5,9 @@ pub enum EngineError {
     #[error("engine '{engine}' timed out")]
     Timeout { engine: &'static str },
 
+    #[error("engine '{engine}' skipped during failure cooldown")]
+    Cooldown { engine: &'static str },
+
     #[error("engine '{engine}' HTTP error: {source}")]
     Http {
         engine: &'static str,
@@ -24,10 +27,16 @@ pub enum EngineError {
 
 /// Axum handler error — wraps anyhow for flexibility at the HTTP boundary.
 /// Implements IntoResponse so handlers can use `?` and return typed HTTP errors.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AppError {
     status: axum::http::StatusCode,
     message: String,
+}
+
+impl From<std::sync::Arc<AppError>> for AppError {
+    fn from(err: std::sync::Arc<AppError>) -> Self {
+        (*err).clone()
+    }
 }
 
 impl AppError {

@@ -63,7 +63,7 @@ pub struct SearchQuery {
     pub max_results: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchResponse {
     pub query: String,
     pub results: Vec<AggregatedResult>,
@@ -71,7 +71,7 @@ pub struct SearchResponse {
     pub engines_failed: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ImageSearchResponse {
     pub query: String,
     pub results: Vec<AggregatedImageResult>,
