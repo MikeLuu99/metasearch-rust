@@ -11,28 +11,51 @@
 from __future__ import annotations
 
 import random
-from pathlib import Path
 
 from locust import HttpUser, between, tag, task
 
-_QUERY_FILE = Path(__file__).with_name("queries.txt")
-
-_FALLBACK_QUERIES = [
+_QUERIES = [
     "rust programming",
-    "tokio async",
-    "python",
-    "javascript",
+    "tokio async runtime",
+    "axum web framework",
+    "serde json rust",
+    "cargo workspace",
+    "async await rust",
+    "actix web vs axum",
+    "rust borrow checker",
+    "rust lifetime annotations",
+    "rayon parallel iterators",
+    "rust error handling",
+    "clap command line arguments",
+    "tower middleware",
+    "reqwest http client",
+    "rust web assembly",
+    "sqlx database driver",
+    "rust type system",
+    "rust futures stream",
+    "hyper http server",
+    "rust procedural macros",
+    "rust trait objects",
+    "tokio select",
+    "rust memory safety",
+    "moka cache rust",
+    "rust macros",
+    "rust testing",
+    "rust compiler",
+    "web scraping rust",
+    "html parsing rust",
+    "rust regex",
+    "http2 keep alive",
+    "tcp socket programming",
+    "rust async streams",
+    "backend load testing",
+    "api rate limiting",
+    "reverse proxy nginx",
+    "search engine ranking",
+    "reciprocal rank fusion",
+    "metadata extraction",
+    "user agent headers",
 ]
-
-
-def _load_queries() -> list[str]:
-    if not _QUERY_FILE.exists():
-        return _FALLBACK_QUERIES
-    return [
-        line.strip()
-        for line in _QUERY_FILE.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
 
 
 class SearchUser(HttpUser):
@@ -40,12 +63,8 @@ class SearchUser(HttpUser):
 
     wait_time = between(1, 5)
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.queries = _load_queries()
-
     def _random_query(self) -> str:
-        return random.choice(self.queries)
+        return random.choice(_QUERIES)
 
     @task(7)
     def search(self) -> None:

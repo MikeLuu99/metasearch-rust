@@ -239,8 +239,9 @@ uv run --directory loadtest locust -f locustfile.py --headless \
     --host http://localhost:3000 --users 50 --spawn-rate 5 --run-time 2m
 ```
 
-Task mix is 70% `/search`, 20% `/images`, 10% `/health`; queries are sampled
-from `loadtest/queries.txt`. Add `--csv results` for CSV output.
+Task mix is 70% `/search`, 20% `/images`, 10% `/health`; the query pool is
+embedded in `loadtest/locustfile.py` (`_QUERIES`). Add `--csv results` for CSV
+output.
 
 ## Tests
 
