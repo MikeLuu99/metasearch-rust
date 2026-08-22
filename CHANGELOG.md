@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.1...v0.3.2) - 2026-08-22
+
+### Fixed
+
+- engine reliability and result correctness
+- harden server exposure, flow control, and lifecycle
+- correct documentation drift
+- only strip index filenames preceded by a path separator
+- avoid UTF-8 panic when truncating snippets in examples
+- return ParseFailed when Sogou omits initial-state JSON
+
+### Other
+
+- apply cargo fmt
+- add search-tui dependency
+
 ## [0.3.1](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.0...v0.3.1) - 2026-08-07
 
 ### Other

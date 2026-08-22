@@ -1316,6 +1316,29 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "metadata-search-engine-rs"
 version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d13eab71e3c3afe4891f765d2a7ee4fd368bbd547a822c05df769803a730143"
+dependencies = [
+ "anyhow",
+ "axum",
+ "futures",
+ "moka",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
+name = "metadata-search-engine-rs"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -1337,29 +1360,6 @@ dependencies = [
  "url",
  "urlencoding",
  "wiremock",
-]
-
-[[package]]
-name = "metadata-search-engine-rs"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d13eab71e3c3afe4891f765d2a7ee4fd368bbd547a822c05df769803a730143"
-dependencies = [
- "anyhow",
- "axum",
- "futures",
- "moka",
- "reqwest",
- "scraper",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tower-http 0.5.2",
- "tracing",
- "tracing-subscriber",
- "url",
- "urlencoding",
 ]
 
 [[package]]
@@ -2073,7 +2073,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "htmd",
- "metadata-search-engine-rs 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "metadata-search-engine-rs 0.3.1",
  "open",
  "ratatui",
  "rayon",
