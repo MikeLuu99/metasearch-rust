@@ -106,15 +106,16 @@ async fn fetch_page(
             vec![("q", query.to_string()), ("page", page.to_string())]
         };
 
-        let response = client
-            .get(base)
-            .query(&params)
-            .send()
-            .await
-            .map_err(|e| EngineError::Http {
-                engine: ENGINE,
-                source: e,
-            })?;
+        let response =
+            client
+                .get(base)
+                .query(&params)
+                .send()
+                .await
+                .map_err(|e| EngineError::Http {
+                    engine: ENGINE,
+                    source: e,
+                })?;
 
         if !response.status().is_success() {
             return Err(EngineError::BadStatus {
@@ -281,7 +282,12 @@ mod tests {
 
     fn page_body(count: usize, offset: usize) -> String {
         (0..count)
-            .map(|i| result_block(&format!("https://example.com/{offset}/{i}"), &format!("T{offset}-{i}")))
+            .map(|i| {
+                result_block(
+                    &format!("https://example.com/{offset}/{i}"),
+                    &format!("T{offset}-{i}"),
+                )
+            })
             .collect()
     }
 
@@ -360,9 +366,7 @@ mod tests {
 
         wiremock::Mock::given(wiremock::matchers::method("GET"))
             .and(wiremock::matchers::query_param_is_missing("page"))
-            .respond_with(
-                wiremock::ResponseTemplate::new(200).set_body_string(page_body(4, 1)),
-            )
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(page_body(4, 1)))
             .expect(1)
             .mount(&mock)
             .await;
