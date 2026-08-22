@@ -129,9 +129,13 @@ const ISO_639_1: &[&str] = &[
 ];
 
 /// Strip index filenames so /page/index.html and /page/ produce the same path.
+/// The suffix must be preceded by `/` so pages like /docs/reindex.html are
+/// left untouched instead of collapsing to /docs/re.
 fn strip_index_file(path: &str) -> &str {
     for index in INDEX_FILES {
-        if let Some(dir) = path.strip_suffix(index) {
+        if let Some(dir) = path.strip_suffix(index)
+            && dir.ends_with('/')
+        {
             return dir;
         }
     }
@@ -272,5 +276,15 @@ mod tests {
         let a = normalize("https://example.com/en-US/page/index.html").unwrap();
         let b = normalize("https://example.com/page").unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_does_not_strip_embedded_index_filename() {
+        // "reindex.html" merely ends with "index.html" — the suffix must be
+        // preceded by '/' or the page would collapse to /docs/re
+        let a = normalize("https://example.com/docs/reindex.html").unwrap();
+        let b = normalize("https://example.com/docs/re").unwrap();
+        assert_ne!(a, b);
+        assert!(a.contains("/docs/reindex.html"));
     }
 }
