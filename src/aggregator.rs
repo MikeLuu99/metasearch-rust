@@ -271,8 +271,7 @@ fn image_key(result: &ImageResult) -> Option<String> {
     let page = normalizer::normalize(&result.url)?;
     // Normalize the image URL too so scheme/tracking variants of the same
     // file merge instead of counting as distinct images.
-    let img = normalizer::normalize(&result.img_src)
-        .unwrap_or_else(|| result.img_src.clone());
+    let img = normalizer::normalize(&result.img_src).unwrap_or_else(|| result.img_src.clone());
     Some(format!("{page}|{img}"))
 }
 

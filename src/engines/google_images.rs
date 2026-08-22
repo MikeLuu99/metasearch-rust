@@ -140,7 +140,10 @@ fn parse_json(body: &str, max_results: usize) -> Result<Vec<ImageResult>, Engine
         body
     };
 
-    let Some(start) = payload.find("{\"ischj\":").or_else(|| payload.find("{\"ischj\" :")) else {
+    let Some(start) = payload
+        .find("{\"ischj\":")
+        .or_else(|| payload.find("{\"ischj\" :"))
+    else {
         return Err(EngineError::ParseFailed {
             engine: ENGINE,
             reason: "no ischj JSON object found in Google response".to_string(),

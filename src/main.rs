@@ -5,9 +5,9 @@ use metadata_search_engine_rs::{
     cache::{EngineLimits, build_response_cache},
     config::AppConfig,
     engines::{
-        BingImagesEngine, BraveEngine, DuckDuckGoEngine, DuckDuckGoImagesEngine, GoogleImagesEngine,
-        ImageSearchEngine, SearchEngine, SogouImagesEngine, StartpageEngine, YahooEngine,
-        build_http_client,
+        BingImagesEngine, BraveEngine, DuckDuckGoEngine, DuckDuckGoImagesEngine,
+        GoogleImagesEngine, ImageSearchEngine, SearchEngine, SogouImagesEngine, StartpageEngine,
+        YahooEngine, build_http_client,
     },
     server::{build_router, handlers::AppState},
 };

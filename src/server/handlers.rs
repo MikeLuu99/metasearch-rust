@@ -51,7 +51,9 @@ pub async fn search(
     }
 
     if state.engines.is_empty() {
-        return Err(AppError::service_unavailable("no search engines configured"));
+        return Err(AppError::service_unavailable(
+            "no search engines configured",
+        ));
     }
 
     // Client may request fewer results, but never more than the server cap.

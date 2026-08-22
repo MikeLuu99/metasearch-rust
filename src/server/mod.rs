@@ -39,7 +39,9 @@ fn cors_layer(state: &AppState) -> CorsLayer {
         Some(origins) if !origins.is_empty() => {
             let parsed: Vec<_> = origins.iter().filter_map(|o| o.parse().ok()).collect();
             if parsed.is_empty() {
-                tracing::warn!("ALLOWED_ORIGINS contained no valid origins; leaving CORS permissive");
+                tracing::warn!(
+                    "ALLOWED_ORIGINS contained no valid origins; leaving CORS permissive"
+                );
                 layer
             } else {
                 layer.allow_origin(AllowOrigin::list(parsed))

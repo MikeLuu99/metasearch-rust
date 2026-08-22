@@ -164,7 +164,10 @@ fn parse_json(body: &str, max_results: usize) -> Result<Vec<ImageResult>, Engine
 
         let title = item.title.trim().to_string();
         if title.is_empty() || !is_http_url(&item.url) || !is_http_url(&item.image) {
-            tracing::debug!(engine = ENGINE, "skipping image item with missing/invalid urls");
+            tracing::debug!(
+                engine = ENGINE,
+                "skipping image item with missing/invalid urls"
+            );
             continue;
         }
 

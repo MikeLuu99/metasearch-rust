@@ -27,10 +27,14 @@ pub async fn search(
 
     // Timeout covers send *and* body download (see duckduckgo.rs).
     let fetch = async {
-        let response = client.get(url).send().await.map_err(|e| EngineError::Http {
-            engine: ENGINE,
-            source: e,
-        })?;
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| EngineError::Http {
+                engine: ENGINE,
+                source: e,
+            })?;
 
         if !response.status().is_success() {
             return Err(EngineError::BadStatus {
