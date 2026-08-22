@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.2...v0.3.3) - 2026-08-22
+
+### Fixed
+
+- startpage bot-wall detection and result pagination
+
+### Other
+
+- apply cargo fmt
+
 ## [0.3.2](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.1...v0.3.2) - 2026-08-22
 
 ### Fixed
