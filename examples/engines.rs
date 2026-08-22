@@ -51,8 +51,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("  #{} {}", i + 1, r.title);
                 println!("      {}", r.url);
                 if let Some(snippet) = &r.snippet {
-                    let len = snippet.len().min(120);
-                    println!("      {}", &snippet[..len]);
+                    println!("      {}", truncate(snippet, 120));
                 }
                 println!();
             }
@@ -61,4 +60,16 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Truncate to at most `max` bytes without splitting a multi-byte character.
+fn truncate(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
