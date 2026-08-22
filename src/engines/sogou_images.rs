@@ -78,8 +78,15 @@ fn parse(body: &str, max_results: usize) -> Result<Vec<ImageResult>, EngineError
     // the first `{` after the marker and scan for its balanced closing brace
     // (skipping quoted strings), which is more robust than SearXNG's
     // non-greedy `({.*?});` regex when the object itself ends in `}};`.
+    // A missing state blob almost always means Sogou served a CAPTCHA or a
+    // JS-challenge page. Returning an error (rather than an empty success)
+    // ensures the failure is recorded and the engine enters cooldown instead
+    // of caching an authoritative-looking "0 results" response.
     let Some(state_json) = extract_initial_state(body) else {
-        return Ok(Vec::new());
+        return Err(EngineError::ParseFailed {
+            engine: ENGINE,
+            reason: "window.__INITIAL_STATE__ JSON not found in response".to_string(),
+        });
     };
 
     let state: SogouInitialState =
@@ -251,13 +258,12 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_missing_initial_state_returns_empty() {
-        assert!(
-            parse("<html><body>enable js</body></html>", 10)
-                .unwrap()
-                .is_empty()
-        );
-        assert!(parse("window.__INITIAL_STATE__", 10).unwrap().is_empty());
+    fn test_parse_missing_initial_state_returns_error() {
+        // A missing state blob usually means a CAPTCHA/JS-challenge page; it
+        // must be an error so cooldowns trigger and empty results are not
+        // cached as successful responses.
+        assert!(parse("<html><body>enable js</body></html>", 10).is_err());
+        assert!(parse("window.__INITIAL_STATE__", 10).is_err());
     }
 
     #[test]
