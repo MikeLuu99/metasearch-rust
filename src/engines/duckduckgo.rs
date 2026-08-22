@@ -3,6 +3,7 @@ use std::time::Duration;
 use reqwest::Client;
 use scraper::Html;
 
+use super::is_http_url;
 use crate::error::EngineError;
 use crate::models::SearchResult;
 
@@ -15,25 +16,36 @@ pub async fn search(
     max_results: usize,
     timeout: Duration,
 ) -> Result<Vec<SearchResult>, EngineError> {
-    let response = tokio::time::timeout(timeout, client.get(DDG_URL).query(&[("q", query)]).send())
-        .await
-        .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-        .map_err(|e| EngineError::Http {
+    // The timeout must cover the whole exchange, including the body
+    // download; otherwise a slow-drip server stalls the worker far past
+    // the configured budget.
+    let fetch = async {
+        let response = client
+            .get(DDG_URL)
+            .query(&[("q", query)])
+            .send()
+            .await
+            .map_err(|e| EngineError::Http {
+                engine: ENGINE,
+                source: e,
+            })?;
+
+        if !response.status().is_success() {
+            return Err(EngineError::BadStatus {
+                engine: ENGINE,
+                status: response.status().as_u16(),
+            });
+        }
+
+        response.text().await.map_err(|e| EngineError::Http {
             engine: ENGINE,
             source: e,
-        })?;
+        })
+    };
 
-    if !response.status().is_success() {
-        return Err(EngineError::BadStatus {
-            engine: ENGINE,
-            status: response.status().as_u16(),
-        });
-    }
-
-    let body = response.text().await.map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    let body = tokio::time::timeout(timeout, fetch)
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
 
     parse(&body, max_results)
 }
@@ -66,7 +78,7 @@ fn parse(html: &str, max_results: usize) -> Result<Vec<SearchResult>, EngineErro
         // We extract the real URL from the uddg query parameter.
         let href = title_el.value().attr("href").unwrap_or("");
         let url = extract_destination_url(href).unwrap_or_else(|| href.to_string());
-        if url.is_empty() {
+        if url.is_empty() || !is_http_url(&url) {
             continue;
         }
 
@@ -88,10 +100,13 @@ fn parse(html: &str, max_results: usize) -> Result<Vec<SearchResult>, EngineErro
 }
 
 // DDG redirect links look like: /l/?uddg=https%3A%2F%2Fexample.com&rut=...
-// Parse as a full URL and pull out the uddg parameter value.
+// Relative hrefs are resolved against the DDG host to unwrap the redirect;
+// absolute hrefs are already the destination and pass through untouched.
 fn extract_destination_url(href: &str) -> Option<String> {
-    let full = format!("https://html.duckduckgo.com{href}");
-    let parsed = url::Url::parse(&full).ok()?;
+    if is_http_url(href) {
+        return Some(href.to_string());
+    }
+    let parsed = url::Url::parse(&format!("https://html.duckduckgo.com{href}")).ok()?;
     parsed
         .query_pairs()
         .find(|(k, _)| k == "uddg")

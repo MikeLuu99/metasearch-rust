@@ -74,14 +74,22 @@ pub fn aggregate(
     let mut map: HashMap<String, AggregatedResult> = HashMap::new();
 
     for (engine_name, results) in engine_results {
-        for (index, result) in results.into_iter().enumerate() {
-            let rank = index + 1; // 1-indexed for RRF
-            let rrf_score = 1.0 / (RRF_K + rank as f64);
+        // Rank by position among *usable* results: entries skipped for
+        // unparseable URLs must not consume rank positions and deflate the
+        // scores of valid results behind them.
+        let mut rank = 0usize;
 
+        for result in results {
             let key = match normalizer::normalize(&result.url) {
                 Some(k) => k,
-                None => continue, // skip results with unparseable URLs
+                None => {
+                    tracing::debug!(engine = %engine_name, url = %result.url, "skipping result with unparseable url");
+                    continue;
+                }
             };
+
+            rank += 1;
+            let rrf_score = 1.0 / (RRF_K + rank as f64);
 
             match map.get_mut(&key) {
                 Some(existing) => {
@@ -182,14 +190,20 @@ pub fn aggregate_images(
     let mut map: HashMap<String, AggregatedImageResult> = HashMap::new();
 
     for (engine_name, results) in engine_results {
-        for (index, result) in results.into_iter().enumerate() {
-            let rank = index + 1; // 1-indexed for RRF
-            let rrf_score = 1.0 / (RRF_K + rank as f64);
+        // Rank by position among *usable* results, mirroring `aggregate`.
+        let mut rank = 0usize;
 
+        for result in results {
             let key = match image_key(&result) {
                 Some(k) => k,
-                None => continue, // skip results with unparseable URLs
+                None => {
+                    tracing::debug!(engine = %engine_name, url = %result.url, "skipping image result with unparseable url");
+                    continue;
+                }
             };
+
+            rank += 1;
+            let rrf_score = 1.0 / (RRF_K + rank as f64);
 
             match map.get_mut(&key) {
                 Some(existing) => {
@@ -207,6 +221,15 @@ pub fn aggregate_images(
                     if existing.resolution.is_none() {
                         existing.resolution = result.resolution;
                     }
+                    if existing.img_format.is_none() {
+                        existing.img_format = result.img_format;
+                    }
+                    if existing.author.is_none() {
+                        existing.author = result.author;
+                    }
+                    if existing.snippet.is_none() {
+                        existing.snippet = result.snippet;
+                    }
                 }
                 None => {
                     map.insert(
@@ -218,6 +241,9 @@ pub fn aggregate_images(
                             thumbnail_src: result.thumbnail_src,
                             source: result.source,
                             resolution: result.resolution,
+                            img_format: result.img_format,
+                            author: result.author,
+                            snippet: result.snippet,
                             engines: vec![engine_name.clone()],
                             score: rrf_score,
                         },
@@ -243,7 +269,11 @@ pub fn aggregate_images(
 
 fn image_key(result: &ImageResult) -> Option<String> {
     let page = normalizer::normalize(&result.url)?;
-    Some(format!("{page}|{}", result.img_src))
+    // Normalize the image URL too so scheme/tracking variants of the same
+    // file merge instead of counting as distinct images.
+    let img = normalizer::normalize(&result.img_src)
+        .unwrap_or_else(|| result.img_src.clone());
+    Some(format!("{page}|{img}"))
 }
 
 #[cfg(test)]

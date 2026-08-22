@@ -6,6 +6,7 @@ use reqwest::{
 };
 use serde::Deserialize;
 
+use super::is_http_url;
 use crate::error::EngineError;
 use crate::models::ImageResult;
 
@@ -36,32 +37,35 @@ pub async fn search(
         urlencoding::encode(query)
     );
 
-    let response = tokio::time::timeout(
-        timeout,
-        client
+    // Timeout covers send *and* body download (see duckduckgo.rs).
+    let fetch = async {
+        let response = client
             .get(url)
             .header(header::USER_AGENT, HeaderValue::from_static(GOOGLE_UA))
             .header(header::COOKIE, HeaderValue::from_static("CONSENT=YES+"))
-            .send(),
-    )
-    .await
-    .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-    .map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+            .send()
+            .await
+            .map_err(|e| EngineError::Http {
+                engine: ENGINE,
+                source: e,
+            })?;
 
-    if !response.status().is_success() {
-        return Err(EngineError::BadStatus {
+        if !response.status().is_success() {
+            return Err(EngineError::BadStatus {
+                engine: ENGINE,
+                status: response.status().as_u16(),
+            });
+        }
+
+        response.text().await.map_err(|e| EngineError::Http {
             engine: ENGINE,
-            status: response.status().as_u16(),
-        });
-    }
+            source: e,
+        })
+    };
 
-    let body = response.text().await.map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    let body = tokio::time::timeout(timeout, fetch)
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
 
     parse_json(&body, max_results)
 }
@@ -127,8 +131,16 @@ struct GoogleTextInGrid {
 }
 
 fn parse_json(body: &str, max_results: usize) -> Result<Vec<ImageResult>, EngineError> {
-    // Strip Google's `)]}'` JSON-hijacking prefix before parsing.
-    let Some(start) = body.find("{\"ischj\":") else {
+    // Strip Google's `)]}'` JSON-hijacking prefix before parsing. Prefer
+    // trimming the known prefix (stable across serialization tweaks); fall
+    // back to locating the object start for unexpected layouts.
+    let payload = if let Some(rest) = body.strip_prefix(")]}'") {
+        rest.trim_start()
+    } else {
+        body
+    };
+
+    let Some(start) = payload.find("{\"ischj\":").or_else(|| payload.find("{\"ischj\" :")) else {
         return Err(EngineError::ParseFailed {
             engine: ENGINE,
             reason: "no ischj JSON object found in Google response".to_string(),
@@ -136,7 +148,7 @@ fn parse_json(body: &str, max_results: usize) -> Result<Vec<ImageResult>, Engine
     };
 
     let parsed: GoogleImagesResponse =
-        serde_json::from_str(&body[start..]).map_err(|e| EngineError::ParseFailed {
+        serde_json::from_str(&payload[start..]).map_err(|e| EngineError::ParseFailed {
             engine: ENGINE,
             reason: format!("invalid Google images JSON: {e}"),
         })?;
@@ -152,7 +164,8 @@ fn parse_json(body: &str, max_results: usize) -> Result<Vec<ImageResult>, Engine
         let Some(img) = item.original_image else {
             continue;
         };
-        if title.is_empty() || item.result.referrer_url.is_empty() || img.url.is_empty() {
+        if title.is_empty() || !is_http_url(&item.result.referrer_url) || !is_http_url(&img.url) {
+            tracing::debug!(engine = ENGINE, "skipping image with missing/invalid urls");
             continue;
         }
 

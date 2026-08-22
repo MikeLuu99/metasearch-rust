@@ -15,28 +15,34 @@ pub async fn search(
     max_results: usize,
     timeout: Duration,
 ) -> Result<Vec<SearchResult>, EngineError> {
-    let response = tokio::time::timeout(
-        timeout,
-        client.get(STARTPAGE_URL).query(&[("q", query)]).send(),
-    )
-    .await
-    .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-    .map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    // Timeout covers send *and* body download (see duckduckgo.rs).
+    let fetch = async {
+        let response = client
+            .get(STARTPAGE_URL)
+            .query(&[("q", query)])
+            .send()
+            .await
+            .map_err(|e| EngineError::Http {
+                engine: ENGINE,
+                source: e,
+            })?;
 
-    if !response.status().is_success() {
-        return Err(EngineError::BadStatus {
+        if !response.status().is_success() {
+            return Err(EngineError::BadStatus {
+                engine: ENGINE,
+                status: response.status().as_u16(),
+            });
+        }
+
+        response.text().await.map_err(|e| EngineError::Http {
             engine: ENGINE,
-            status: response.status().as_u16(),
-        });
-    }
+            source: e,
+        })
+    };
 
-    let body = response.text().await.map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    let body = tokio::time::timeout(timeout, fetch)
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
 
     parse(&body, max_results)
 }

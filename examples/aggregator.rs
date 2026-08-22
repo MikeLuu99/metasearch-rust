@@ -23,13 +23,12 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Querying all engines for: {query:?}\n");
 
-    let client = Arc::new(build_http_client()?);
-
+    // One client per engine keeps each engine's cookie jar isolated.
     let engines: Vec<Arc<dyn SearchEngine>> = vec![
-        Arc::new(DuckDuckGoEngine::new(Arc::clone(&client))),
-        Arc::new(BraveEngine::new(Arc::clone(&client))),
-        Arc::new(StartpageEngine::new(Arc::clone(&client))),
-        Arc::new(YahooEngine::new(Arc::clone(&client))),
+        Arc::new(DuckDuckGoEngine::new(Arc::new(build_http_client()?))),
+        Arc::new(BraveEngine::new(Arc::new(build_http_client()?))),
+        Arc::new(StartpageEngine::new(Arc::new(build_http_client()?))),
+        Arc::new(YahooEngine::new(Arc::new(build_http_client()?))),
     ];
 
     let (successes, failures) = query_all_engines(

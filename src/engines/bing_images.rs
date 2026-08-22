@@ -4,6 +4,7 @@ use reqwest::Client;
 use scraper::Html;
 use serde::Deserialize;
 
+use super::is_http_url;
 use crate::error::EngineError;
 use crate::models::ImageResult;
 
@@ -24,9 +25,9 @@ pub async fn search(
     max_results: usize,
     timeout: Duration,
 ) -> Result<Vec<ImageResult>, EngineError> {
-    let response = tokio::time::timeout(
-        timeout,
-        client
+    // Timeout covers send *and* body download (see duckduckgo.rs).
+    let fetch = async {
+        let response = client
             .get(BING_IMAGES_URL)
             .query(&[
                 ("q", query),
@@ -34,26 +35,29 @@ pub async fn search(
                 ("first", "1"),
                 ("count", "35"),
             ])
-            .send(),
-    )
-    .await
-    .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-    .map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+            .send()
+            .await
+            .map_err(|e| EngineError::Http {
+                engine: ENGINE,
+                source: e,
+            })?;
 
-    if !response.status().is_success() {
-        return Err(EngineError::BadStatus {
+        if !response.status().is_success() {
+            return Err(EngineError::BadStatus {
+                engine: ENGINE,
+                status: response.status().as_u16(),
+            });
+        }
+
+        response.text().await.map_err(|e| EngineError::Http {
             engine: ENGINE,
-            status: response.status().as_u16(),
-        });
-    }
+            source: e,
+        })
+    };
 
-    let body = response.text().await.map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    let body = tokio::time::timeout(timeout, fetch)
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
 
     parse(&body, max_results)
 }
@@ -104,10 +108,16 @@ fn parse(html: &str, max_results: usize) -> Result<Vec<ImageResult>, EngineError
 
         let metadata: BingMetadata = match serde_json::from_str(m_attr) {
             Ok(m) => m,
-            Err(_) => continue, // ads and other non-result entries lack valid m blobs
+            Err(e) => {
+                // Ads and other non-result entries lack valid m blobs; log so
+                // systematic breakage is visible instead of silent.
+                tracing::debug!(engine = ENGINE, error = %e, "skipping entry with invalid m JSON");
+                continue;
+            }
         };
 
-        if metadata.purl.is_empty() || metadata.murl.is_empty() {
+        if !is_http_url(&metadata.purl) || !is_http_url(&metadata.murl) {
+            tracing::debug!(engine = ENGINE, "skipping image with missing/invalid urls");
             continue;
         }
 

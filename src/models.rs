@@ -51,6 +51,9 @@ pub struct AggregatedImageResult {
     pub thumbnail_src: Option<String>,
     pub source: Option<String>,
     pub resolution: Option<String>,
+    pub img_format: Option<String>,
+    pub author: Option<String>,
+    pub snippet: Option<String>,
     pub engines: Vec<String>,
     pub score: f64,
 }

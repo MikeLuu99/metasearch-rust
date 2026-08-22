@@ -3,6 +3,7 @@ use std::time::Duration;
 use reqwest::Client;
 use serde::Deserialize;
 
+use super::is_http_url;
 use crate::error::EngineError;
 use crate::models::ImageResult;
 
@@ -22,33 +23,36 @@ pub async fn search(
 ) -> Result<Vec<ImageResult>, EngineError> {
     let token = fetch_vqd_token(client, query, timeout).await?;
 
-    let response = tokio::time::timeout(
-        timeout,
-        client
+    // Timeout covers send *and* body download (see duckduckgo.rs).
+    let fetch = async {
+        let response = client
             .get(DDG_IMAGES_API)
             // i.js returns 403 over HTTP/2 — DDG only serves it over HTTP/1.1
             .version(reqwest::Version::HTTP_11)
             .query(&[("l", "us-en"), ("o", "json"), ("q", query), ("vqd", &token)])
-            .send(),
-    )
-    .await
-    .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-    .map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+            .send()
+            .await
+            .map_err(|e| EngineError::Http {
+                engine: ENGINE,
+                source: e,
+            })?;
 
-    if !response.status().is_success() {
-        return Err(EngineError::BadStatus {
+        if !response.status().is_success() {
+            return Err(EngineError::BadStatus {
+                engine: ENGINE,
+                status: response.status().as_u16(),
+            });
+        }
+
+        response.text().await.map_err(|e| EngineError::Http {
             engine: ENGINE,
-            status: response.status().as_u16(),
-        });
-    }
+            source: e,
+        })
+    };
 
-    let body = response.text().await.map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    let body = tokio::time::timeout(timeout, fetch)
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
 
     parse_json(&body, max_results)
 }
@@ -59,32 +63,34 @@ async fn fetch_vqd_token(
     query: &str,
     timeout: Duration,
 ) -> Result<String, EngineError> {
-    let response = tokio::time::timeout(
-        timeout,
-        client
+    let fetch = async {
+        let response = client
             .get(DDG_URL)
             .version(reqwest::Version::HTTP_11)
             .query(&[("q", query), ("iax", "images"), ("ia", "images")])
-            .send(),
-    )
-    .await
-    .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-    .map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+            .send()
+            .await
+            .map_err(|e| EngineError::Http {
+                engine: ENGINE,
+                source: e,
+            })?;
 
-    if !response.status().is_success() {
-        return Err(EngineError::BadStatus {
+        if !response.status().is_success() {
+            return Err(EngineError::BadStatus {
+                engine: ENGINE,
+                status: response.status().as_u16(),
+            });
+        }
+
+        response.text().await.map_err(|e| EngineError::Http {
             engine: ENGINE,
-            status: response.status().as_u16(),
-        });
-    }
+            source: e,
+        })
+    };
 
-    let body = response.text().await.map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    let body = tokio::time::timeout(timeout, fetch)
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
 
     extract_vqd(&body).ok_or_else(|| EngineError::ParseFailed {
         engine: ENGINE,
@@ -157,7 +163,8 @@ fn parse_json(body: &str, max_results: usize) -> Result<Vec<ImageResult>, Engine
         }
 
         let title = item.title.trim().to_string();
-        if title.is_empty() || item.url.is_empty() || item.image.is_empty() {
+        if title.is_empty() || !is_http_url(&item.url) || !is_http_url(&item.image) {
+            tracing::debug!(engine = ENGINE, "skipping image item with missing/invalid urls");
             continue;
         }
 

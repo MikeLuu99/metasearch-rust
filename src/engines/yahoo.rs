@@ -15,33 +15,36 @@ pub async fn search(
     max_results: usize,
     timeout: Duration,
 ) -> Result<Vec<SearchResult>, EngineError> {
-    let response = tokio::time::timeout(
-        timeout,
-        client
+    // Timeout covers send *and* body download (see duckduckgo.rs).
+    let fetch = async {
+        let response = client
             .get(YAHOO_URL)
             .query(&[("p", query)])
             // Language + safe-search filter cookie (vm=p means safe-search off)
             .header("Cookie", "sB=v=1&vm=p&fl=1&vl=lang_en&pn=10")
-            .send(),
-    )
-    .await
-    .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-    .map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+            .send()
+            .await
+            .map_err(|e| EngineError::Http {
+                engine: ENGINE,
+                source: e,
+            })?;
 
-    if !response.status().is_success() {
-        return Err(EngineError::BadStatus {
+        if !response.status().is_success() {
+            return Err(EngineError::BadStatus {
+                engine: ENGINE,
+                status: response.status().as_u16(),
+            });
+        }
+
+        response.text().await.map_err(|e| EngineError::Http {
             engine: ENGINE,
-            status: response.status().as_u16(),
-        });
-    }
+            source: e,
+        })
+    };
 
-    let body = response.text().await.map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+    let body = tokio::time::timeout(timeout, fetch)
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
 
     parse(&body, max_results)
 }
@@ -106,17 +109,13 @@ fn parse(html: &str, max_results: usize) -> Result<Vec<SearchResult>, EngineErro
 
 // Yahoo wraps destination URLs inside a redirect:
 //   https://r.search.yahoo.com/_ylt=.../RU=https%3A%2F%2Factual.com/RS=...
-// Find the real URL between /RU= and /RS or /RK, then percent-decode it.
+// The real URL sits between "/RU=" and "/RS" or "/RK", percent-encoded.
+// Matching on "/RU=http" (the destination always starts with a scheme)
+// avoids tripping over a literal "/RU=" that appears earlier in the
+// tracking portion of the redirect.
 fn parse_yahoo_url(href: &str) -> String {
-    let start = match href.find("/RU=") {
-        Some(pos) => {
-            let after = pos + 4; // skip "/RU="
-            // The encoded URL starts with http
-            match href[after..].find("http") {
-                Some(off) => after + off,
-                None => return href.to_string(),
-            }
-        }
+    let start = match href.find("/RU=http") {
+        Some(pos) => pos + "/RU=".len(),
         None => return href.to_string(),
     };
 
@@ -159,6 +158,17 @@ mod tests {
     #[test]
     fn test_parse_yahoo_url_rk_ending() {
         let href = "https://r.search.yahoo.com/_ylt=abc/RU=https%3A%2F%2Fexample.com/RK=2/RS=xyz";
+        assert_eq!(parse_yahoo_url(href), "https://example.com");
+    }
+
+    #[test]
+    fn test_parse_yahoo_url_ignores_ru_in_tracking_part() {
+        // A literal "/RU=" inside the tracking portion must not truncate the
+        // real destination — match on "/RU=http" instead.
+        let href = concat!(
+            "https://r.search.yahoo.com/_ylt=x/RU=not-a-url/RS=y",
+            "/RU=https%3A%2F%2Fexample.com/RS=z"
+        );
         assert_eq!(parse_yahoo_url(href), "https://example.com");
     }
 

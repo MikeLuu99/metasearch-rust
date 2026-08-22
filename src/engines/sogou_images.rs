@@ -3,6 +3,7 @@ use std::time::Duration;
 use reqwest::Client;
 use serde::Deserialize;
 
+use super::is_http_url;
 use crate::error::EngineError;
 use crate::models::ImageResult;
 
@@ -24,25 +25,29 @@ pub async fn search(
 ) -> Result<Vec<ImageResult>, EngineError> {
     let url = format!("{SOGOU_URL}?query={}&start=0", urlencoding::encode(query));
 
-    let response = tokio::time::timeout(timeout, client.get(url).send())
-        .await
-        .map_err(|_| EngineError::Timeout { engine: ENGINE })?
-        .map_err(|e| EngineError::Http {
+    // Timeout covers send *and* body download (see duckduckgo.rs).
+    let fetch = async {
+        let response = client.get(url).send().await.map_err(|e| EngineError::Http {
             engine: ENGINE,
             source: e,
         })?;
 
-    if !response.status().is_success() {
-        return Err(EngineError::BadStatus {
-            engine: ENGINE,
-            status: response.status().as_u16(),
-        });
-    }
+        if !response.status().is_success() {
+            return Err(EngineError::BadStatus {
+                engine: ENGINE,
+                status: response.status().as_u16(),
+            });
+        }
 
-    let body = response.text().await.map_err(|e| EngineError::Http {
-        engine: ENGINE,
-        source: e,
-    })?;
+        response.text().await.map_err(|e| EngineError::Http {
+            engine: ENGINE,
+            source: e,
+        })
+    };
+
+    let body = tokio::time::timeout(timeout, fetch)
+        .await
+        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
 
     parse(&body, max_results)
 }
@@ -104,7 +109,8 @@ fn parse(body: &str, max_results: usize) -> Result<Vec<ImageResult>, EngineError
 
         let title = item.title.trim().to_string();
         let pic = item.pic_url.trim().to_string();
-        if title.is_empty() || item.url.is_empty() || pic.is_empty() {
+        if title.is_empty() || !is_http_url(&item.url) || !is_http_url(&pic) {
+            tracing::debug!(engine = ENGINE, "skipping image with missing/invalid urls");
             continue;
         }
 

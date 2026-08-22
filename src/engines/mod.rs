@@ -53,6 +53,12 @@ pub trait ImageSearchEngine: Send + Sync {
 // `with_timeout`. Mirrors the old hardcoded ENGINE_TIMEOUT_MS default.
 pub const DEFAULT_TIMEOUT_MS: u64 = 8_000;
 
+/// Accept only http(s) URLs. Scraped results must never carry `javascript:`
+/// or `data:` URIs through to downstream API consumers.
+pub(crate) fn is_http_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
 pub struct DuckDuckGoEngine {
     pub client: Arc<Client>,
     pub timeout: Duration,
