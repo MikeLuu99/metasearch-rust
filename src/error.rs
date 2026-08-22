@@ -8,6 +8,9 @@ pub enum EngineError {
     #[error("engine '{engine}' skipped during failure cooldown")]
     Cooldown { engine: &'static str },
 
+    #[error("engine '{engine}' has no concurrency capacity configured")]
+    Unavailable { engine: &'static str },
+
     #[error("engine '{engine}' HTTP error: {source}")]
     Http {
         engine: &'static str,
@@ -50,6 +53,13 @@ impl AppError {
     pub fn service_unavailable(msg: impl Into<String>) -> Self {
         Self {
             status: axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            message: msg.into(),
+        }
+    }
+
+    pub fn internal_error(msg: impl Into<String>) -> Self {
+        Self {
+            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             message: msg.into(),
         }
     }

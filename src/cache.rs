@@ -75,29 +75,33 @@ impl EngineLimits {
         let semaphore = self
             .semaphores
             .lock()
-            .expect("engine semaphore map poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .entry(name)
             .or_insert_with(|| Arc::new(Semaphore::new(self.max_concurrency)))
             .clone();
 
-        // The semaphore is never closed, so acquire_owned only errors if the
-        // limit itself is zero.
-        Ok(semaphore
-            .acquire_owned()
-            .await
-            .expect("engine semaphore closed"))
+        // acquire_owned only errors if the semaphore was closed or created
+        // with zero permits (e.g. a misconfigured limit of 0) — surface that
+        // as an engine error instead of panicking in a request path.
+        semaphore.acquire_owned().await.map_err(|_| {
+            tracing::error!(engine = name, "engine semaphore unavailable (limit 0?)");
+            EngineError::Unavailable { engine: name }
+        })
     }
 
     /// Record that an engine call failed, starting its cooldown window.
     pub fn record_failure(&self, name: &'static str) {
         self.cooldowns
             .lock()
-            .expect("engine cooldown map poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(name, Instant::now());
     }
 
     fn in_cooldown(&self, name: &'static str) -> bool {
-        let cooldowns = self.cooldowns.lock().expect("engine cooldown map poisoned");
+        let cooldowns = self
+            .cooldowns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         matches!(
             cooldowns.get(&name),
             Some(started) if started.elapsed() < self.cooldown

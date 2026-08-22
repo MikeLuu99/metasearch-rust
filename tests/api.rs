@@ -163,6 +163,8 @@ fn build_test_state(
         max_results,
         cache: Some(build_response_cache(Duration::from_secs(60))),
         engine_limits: EngineLimits::new(4, Duration::from_secs(30)),
+        allowed_origins: None,
+        rate_limiter: None,
     });
     build_router(state)
 }
@@ -356,6 +358,8 @@ async fn test_search_respects_client_max_results_capped_by_config() {
         max_results: 10,
         cache: Some(build_response_cache(Duration::from_secs(60))),
         engine_limits: EngineLimits::new(4, Duration::from_secs(30)),
+        allowed_origins: None,
+        rate_limiter: None,
     });
     let router = build_router(state);
 

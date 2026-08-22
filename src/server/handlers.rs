@@ -23,6 +23,10 @@ pub struct AppState {
     /// TTL response cache keyed by normalized query; `None` disables caching.
     pub cache: Option<Cache<String, CachedResponse>>,
     pub engine_limits: EngineLimits,
+    /// CORS allow-list; `None` keeps CORS fully permissive.
+    pub allowed_origins: Option<Vec<String>>,
+    /// Per-IP request limiter; `None` disables rate limiting.
+    pub rate_limiter: Option<crate::server::ratelimit::RateLimiter>,
 }
 
 pub async fn health() -> Json<serde_json::Value> {
@@ -44,6 +48,10 @@ pub async fn search(
 
     if query.is_empty() {
         return Err(AppError::bad_request("query parameter 'q' cannot be empty"));
+    }
+
+    if state.engines.is_empty() {
+        return Err(AppError::service_unavailable("no search engines configured"));
     }
 
     // Client may request fewer results, but never more than the server cap.
@@ -70,7 +78,9 @@ pub async fn search(
 
         return match cached {
             CachedResponse::Search(response) => Ok((StatusCode::OK, Json(response))),
-            CachedResponse::Image(_) => unreachable!("'search:' key cannot hold an image response"),
+            CachedResponse::Image(_) => Err(AppError::internal_error(
+                "cache namespace collision: image response under a search key",
+            )),
         };
     }
 
@@ -121,9 +131,9 @@ pub async fn search_images(
 
         return match cached {
             CachedResponse::Image(response) => Ok((StatusCode::OK, Json(response))),
-            CachedResponse::Search(_) => {
-                unreachable!("'images:' key cannot hold a search response")
-            }
+            CachedResponse::Search(_) => Err(AppError::internal_error(
+                "cache namespace collision: search response under an images key",
+            )),
         };
     }
 
