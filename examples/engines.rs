@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         "startpage" => Box::new(StartpageEngine::new(client.clone())),
         "yahoo" => Box::new(YahooEngine::new(client.clone())),
         _ => {
-            println!("Engine not recognized. Defaulting to DuckDuckGo...");
+            println!("Engine not recognized. Defaulting to Startpage...");
             Box::new(StartpageEngine::new(client.clone()))
         }
     };

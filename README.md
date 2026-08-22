@@ -15,7 +15,7 @@ Image search follows the same pipeline on `GET /images?q=<query>`: the query is 
 
 ## Requirements
 
-- Rust 1.75+
+- Rust 1.85+ (the crate uses edition 2024)
 - Cargo
 
 ## Installation
@@ -30,13 +30,13 @@ Or add manually to `Cargo.toml`:
 
 ```toml
 [dependencies]
-metadata-search-engine-rs = "0.1"
+metadata-search-engine-rs = "0.3"
 ```
 
 ### As a server (from source)
 
 ```bash
-git clone https://github.com/MikeLuu99/searxng-rust
+git clone https://github.com/MikeLuu99/metasearch-rust
 cd metadata-search-engine-rs
 cargo build --release
 ```
@@ -63,7 +63,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-metadata-search-engine-rs = "0.1"
+metadata-search-engine-rs = "0.3"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -92,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
 use std::sync::Arc;
 use metadata_search_engine_rs::{
     aggregator::{aggregate, query_all_engines},
+    cache::EngineLimits,
     engines::{BraveEngine, DuckDuckGoEngine, SearchEngine, StartpageEngine, YahooEngine, build_http_client},
 };
 
@@ -105,7 +106,8 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(YahooEngine::new(Arc::clone(&client))),
     ];
 
-    let (successes, failures) = query_all_engines(&engines, "rust programming", 10).await;
+    let (successes, failures) =
+        query_all_engines(&engines, &EngineLimits::default(), "rust programming", 10).await;
     for (name, err) in &failures {
         eprintln!("engine {name} failed: {err}");
     }
@@ -125,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
 use std::sync::Arc;
 use metadata_search_engine_rs::{
     aggregator::{aggregate, query_all_engines},
+    cache::EngineLimits,
     engines::{BraveEngine, DuckDuckGoEngine, SearchEngine, build_http_client},
 };
 
@@ -136,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(BraveEngine::new(Arc::clone(&client))),
     ];
 
-    let (successes, _) = query_all_engines(&engines, "tokio async rust", 5).await;
+    let (successes, _) = query_all_engines(&engines, &EngineLimits::default(), "tokio async rust", 5).await;
     for r in aggregate(successes, 5) {
         println!("{} — {}", r.title, r.url);
         if let Some(snippet) = r.snippet {
