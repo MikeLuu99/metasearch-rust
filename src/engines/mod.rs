@@ -3,6 +3,7 @@ pub mod brave;
 pub mod ddg_images;
 pub mod duckduckgo;
 pub mod google_images;
+pub mod serpbase;
 pub mod sogou_images;
 pub mod startpage;
 pub mod yahoo;
@@ -79,6 +80,11 @@ pub struct YahooEngine {
     pub timeout: Duration,
 }
 
+pub struct SerpBaseEngine {
+    pub client: Arc<Client>,
+    pub timeout: Duration,
+}
+
 pub struct DuckDuckGoImagesEngine {
     pub client: Arc<Client>,
     pub timeout: Duration,
@@ -120,6 +126,7 @@ impl_engine_constructors!(
     BraveEngine,
     StartpageEngine,
     YahooEngine,
+    SerpBaseEngine,
     DuckDuckGoImagesEngine,
     BingImagesEngine,
     GoogleImagesEngine,
@@ -194,6 +201,25 @@ impl SearchEngine for YahooEngine {
         max_results: usize,
     ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
         Box::pin(yahoo::search(
+            &self.client,
+            query,
+            max_results,
+            self.timeout,
+        ))
+    }
+}
+
+impl SearchEngine for SerpBaseEngine {
+    fn name(&self) -> &'static str {
+        "serpbase"
+    }
+
+    fn search<'a>(
+        &'a self,
+        query: &'a str,
+        max_results: usize,
+    ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
+        Box::pin(serpbase::search(
             &self.client,
             query,
             max_results,

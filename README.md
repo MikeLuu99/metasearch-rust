@@ -5,7 +5,7 @@ A SearXNG-style metadata search engine written in Rust. Fans out queries to mult
 ## How it works
 
 1. A search request arrives at `GET /search?q=<query>`
-2. The query is sent concurrently to DuckDuckGo, Brave, Startpage, and Yahoo via `reqwest`
+2. The query is sent concurrently to DuckDuckGo, Brave, Startpage, Yahoo, and (optionally) SerpBase via `reqwest`
 3. Each engine parses the HTML response with `scraper` (CSS selectors over Mozilla's html5ever)
 4. Results are deduplicated by normalized URL (tracking params stripped, locale prefixes removed, query params sorted)
 5. Duplicate URLs are merged and scored with RRF (`score = Σ 1/(60 + rank)` across engines) — pages returned by multiple engines rank higher
@@ -184,6 +184,8 @@ curl "http://localhost:3000/search?q=rust"
   "engines_failed": []
 }
 ```
+
+**SerpBase (optional):** when the `SERPBASE_API_KEY` environment variable is set, the SerpBase engine (a Google Search Results API) is added to the fan-out and returns Google organic results as JSON — no HTML parsing, no browser. When the key is unset the engine silently returns no results, so default behavior is unchanged. Get a free key (100 searches, no credit card) at <https://serpbase.dev>.
 
 **Error responses:**
 
