@@ -6,8 +6,8 @@ use metadata_search_engine_rs::{
     config::AppConfig,
     engines::{
         BingImagesEngine, BraveEngine, DuckDuckGoEngine, DuckDuckGoImagesEngine,
-        GoogleImagesEngine, ImageSearchEngine, SearchEngine, SogouImagesEngine, StartpageEngine,
-        YahooEngine, build_http_client,
+        GoogleImagesEngine, ImageSearchEngine, SearchEngine, SerpBaseEngine, SogouImagesEngine,
+        StartpageEngine, YahooEngine, build_http_client,
     },
     server::{build_router, handlers::AppState},
 };
@@ -40,6 +40,10 @@ async fn main() -> anyhow::Result<()> {
             timeout,
         )),
         Arc::new(YahooEngine::with_timeout(
+            Arc::new(build_http_client()?),
+            timeout,
+        )),
+        Arc::new(SerpBaseEngine::with_timeout(
             Arc::new(build_http_client()?),
             timeout,
         )),
