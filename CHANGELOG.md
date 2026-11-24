@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.6](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.5...v0.3.6) - 2026-11-24
+## [0.4.0](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.5...v0.4.0) - 2026-11-24
+
+### Breaking
+
+- `EngineError::Http`'s source is now a `wreq::Error` and `build_http_client` returns a wreq client (TLS fingerprint impersonation)
 
 ### Added
 
