@@ -1,9 +1,8 @@
 use std::time::Duration;
 
 use scraper::Html;
-use wreq::Client;
 
-use super::is_http_url;
+use super::{EngineClients, fetch_text, is_http_url};
 use crate::error::EngineError;
 use crate::models::SearchResult;
 
@@ -11,41 +10,15 @@ const ENGINE: &str = "duckduckgo";
 const DDG_URL: &str = "https://html.duckduckgo.com/html/";
 
 pub async fn search(
-    client: &Client,
+    clients: &EngineClients,
     query: &str,
     max_results: usize,
     timeout: Duration,
 ) -> Result<Vec<SearchResult>, EngineError> {
-    // The timeout must cover the whole exchange, including the body
-    // download; otherwise a slow-drip server stalls the worker far past
-    // the configured budget.
-    let fetch = async {
-        let response = client
-            .get(DDG_URL)
-            .query(&[("q", query)])
-            .send()
-            .await
-            .map_err(|e| EngineError::Http {
-                engine: ENGINE,
-                source: e,
-            })?;
-
-        if !response.status().is_success() {
-            return Err(EngineError::BadStatus {
-                engine: ENGINE,
-                status: response.status().as_u16(),
-            });
-        }
-
-        response.text().await.map_err(|e| EngineError::Http {
-            engine: ENGINE,
-            source: e,
-        })
-    };
-
-    let body = tokio::time::timeout(timeout, fetch)
-        .await
-        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
+    let body = fetch_text(ENGINE, clients, timeout, |client| {
+        client.get(DDG_URL).query(&[("q", query)])
+    })
+    .await?;
 
     parse(&body, max_results)
 }
@@ -177,9 +150,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_live_search() {
-        let client = crate::engines::build_http_client().unwrap();
+        let clients = EngineClients::direct().unwrap();
         let results = search(
-            &client,
+            &clients,
             "rust programming language",
             10,
             Duration::from_millis(crate::engines::DEFAULT_TIMEOUT_MS),

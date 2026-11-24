@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use scraper::Html;
-use wreq::Client;
 
+use super::{EngineClients, fetch_text};
 use crate::error::EngineError;
 use crate::models::SearchResult;
 
@@ -27,18 +27,18 @@ const CHALLENGE_MARKERS: &[&str] = &[
 ];
 
 pub async fn search(
-    client: &Client,
+    clients: &EngineClients,
     query: &str,
     max_results: usize,
     timeout: Duration,
 ) -> Result<Vec<SearchResult>, EngineError> {
-    search_url(client, STARTPAGE_URL, query, max_results, timeout).await
+    search_url(clients, STARTPAGE_URL, query, max_results, timeout).await
 }
 
 /// Pagination-aware fetch loop against a given Startpage base URL
 /// (`base` is injectable so tests can point at a mock server).
 async fn search_url(
-    client: &Client,
+    clients: &EngineClients,
     base: &str,
     query: &str,
     max_results: usize,
@@ -52,7 +52,7 @@ async fn search_url(
             break;
         }
 
-        let body = fetch_page(client, base, query, page, timeout).await?;
+        let body = fetch_page(clients, base, query, page, timeout).await?;
 
         if let Some(marker) = CHALLENGE_MARKERS.iter().find(|m| body.contains(**m)) {
             // A challenge on page 1 means we have nothing usable — fail so
@@ -90,49 +90,24 @@ async fn search_url(
 }
 
 async fn fetch_page(
-    client: &Client,
+    clients: &EngineClients,
     base: &str,
     query: &str,
     page: usize,
     timeout: Duration,
 ) -> Result<String, EngineError> {
-    // Timeout covers send *and* body download (see duckduckgo.rs).
-    let fetch = async {
-        // Page 1 keeps the plain ?q= URL; later pages add the pagination
-        // parameter (verified to return distinct result sets).
-        let params: Vec<(&str, String)> = if page == 1 {
-            vec![("q", query.to_string())]
-        } else {
-            vec![("q", query.to_string()), ("page", page.to_string())]
-        };
-
-        let response =
-            client
-                .get(base)
-                .query(&params)
-                .send()
-                .await
-                .map_err(|e| EngineError::Http {
-                    engine: ENGINE,
-                    source: e,
-                })?;
-
-        if !response.status().is_success() {
-            return Err(EngineError::BadStatus {
-                engine: ENGINE,
-                status: response.status().as_u16(),
-            });
-        }
-
-        response.text().await.map_err(|e| EngineError::Http {
-            engine: ENGINE,
-            source: e,
-        })
+    // Page 1 keeps the plain ?q= URL; later pages add the pagination
+    // parameter (verified to return distinct result sets).
+    let params: Vec<(&str, String)> = if page == 1 {
+        vec![("q", query.to_string())]
+    } else {
+        vec![("q", query.to_string()), ("page", page.to_string())]
     };
 
-    tokio::time::timeout(timeout, fetch)
-        .await
-        .map_err(|_| EngineError::Timeout { engine: ENGINE })?
+    fetch_text(ENGINE, clients, timeout, |client| {
+        client.get(base).query(&params)
+    })
+    .await
 }
 
 fn parse(html: &str, max_results: usize) -> Result<Vec<SearchResult>, EngineError> {
@@ -302,9 +277,9 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let client = build_http_client().unwrap();
+        let clients = EngineClients::direct().unwrap();
         let err = search_url(
-            &client,
+            &clients,
             &mock.uri(),
             "rust",
             10,
@@ -344,9 +319,9 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let client = build_http_client().unwrap();
+        let clients = EngineClients::direct().unwrap();
         let results = search_url(
-            &client,
+            &clients,
             &mock.uri(),
             "rust",
             15,
@@ -377,9 +352,9 @@ mod tests {
             .mount(&mock)
             .await;
 
-        let client = build_http_client().unwrap();
+        let clients = EngineClients::direct().unwrap();
         let results = search_url(
-            &client,
+            &clients,
             &mock.uri(),
             "rust",
             50,
@@ -393,11 +368,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_retry_through_next_client_after_5xx() {
+        let mock = wiremock::MockServer::start().await;
+
+        // First attempt: 500 (retryable). Second: real results.
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&mock)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(page_body(3, 1)))
+            .mount(&mock)
+            .await;
+
+        let clients = EngineClients {
+            clients: vec![
+                std::sync::Arc::new(build_http_client().unwrap()),
+                std::sync::Arc::new(build_http_client().unwrap()),
+            ],
+            next: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            retries: 1,
+        };
+
+        let results = search_url(
+            &clients,
+            &mock.uri(),
+            "rust",
+            10,
+            Duration::from_millis(2000),
+        )
+        .await
+        .unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_rate_limited_response_is_never_retried() {
+        let mock = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(429))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let clients = EngineClients {
+            clients: vec![
+                std::sync::Arc::new(build_http_client().unwrap()),
+                std::sync::Arc::new(build_http_client().unwrap()),
+            ],
+            next: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            retries: 1,
+        };
+
+        let err = search_url(
+            &clients,
+            &mock.uri(),
+            "rust",
+            10,
+            Duration::from_millis(2000),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(&err, EngineError::BadStatus { status: 429, .. }));
+    }
+
+    #[tokio::test]
     #[ignore]
     async fn test_live_search() {
-        let client = crate::engines::build_http_client().unwrap();
+        let clients = EngineClients::direct().unwrap();
         let results = search(
-            &client,
+            &clients,
             "rust programming language",
             10,
             Duration::from_millis(crate::engines::DEFAULT_TIMEOUT_MS),
