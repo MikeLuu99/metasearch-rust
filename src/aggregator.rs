@@ -73,6 +73,25 @@ where
     (successes, failures)
 }
 
+/// Record an engine failure with the appropriate cooldown window.
+///
+/// Rate-limit responses (429) and access-denied responses (403) mean the
+/// upstream is actively throttling this client: retrying on the standard
+/// window keeps the request signature hot and prolongs the block, so those
+/// failures get the longer rate-limit window instead. All other failures use
+/// the standard cooldown.
+fn record_engine_failure(limits: &EngineLimits, name: &'static str, error: &EngineError) {
+    match error {
+        EngineError::BadStatus {
+            status: 429 | 403, ..
+        } => {
+            tracing::warn!(engine = name, status = %error, "upstream rate limit; entering extended cooldown");
+            limits.record_failure_for(name, limits.rate_limit_cooldown());
+        }
+        _ => limits.record_failure(name),
+    }
+}
+
 /// Fan out a query to all engines concurrently.
 ///
 /// Returns the collected raw results and a list of engine names that failed,
@@ -92,8 +111,8 @@ pub async fn query_all_engines(
                     let res = engine.search(&query, max_results).await;
                     // Only a real failure cools the engine down; a cooldown
                     // skip defers the next attempt instead of pushing it out.
-                    if res.is_err() {
-                        limits.record_failure(engine.name());
+                    if let Err(e) = &res {
+                        record_engine_failure(limits, engine.name(), e);
                     }
                     res
                 }
@@ -190,8 +209,8 @@ pub async fn query_all_image_engines(
             match limits.acquire(engine.name()).await {
                 Ok(_permit) => {
                     let res = engine.search_images(&query, max_results).await;
-                    if res.is_err() {
-                        limits.record_failure(engine.name());
+                    if let Err(e) = &res {
+                        record_engine_failure(limits, engine.name(), e);
                     }
                     res
                 }
@@ -646,6 +665,74 @@ mod tests {
                     snippet: None,
                     source_engine: self.name.to_string(),
                 }])
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_error_starts_extended_cooldown() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(FailingEngine {
+            name: "rl",
+            status: 429,
+        })];
+        let limits = EngineLimits::new(2, Duration::from_millis(10))
+            .with_rate_limit_cooldown(Duration::from_millis(200));
+
+        let _ = query_all_engines(&engines, &limits, "q", 5).await;
+
+        // Blocked immediately...
+        assert!(matches!(
+            limits.acquire("rl").await,
+            Err(EngineError::Cooldown { .. })
+        ));
+        // ...and still blocked well past the standard 10ms window: the 429
+        // must not be retried on the short window.
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(matches!(
+            limits.acquire("rl").await,
+            Err(EngineError::Cooldown { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_generic_error_uses_standard_cooldown() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(FailingEngine {
+            name: "gen",
+            status: 500,
+        })];
+        let limits = EngineLimits::new(2, Duration::from_millis(30))
+            .with_rate_limit_cooldown(Duration::from_secs(300));
+
+        let _ = query_all_engines(&engines, &limits, "q", 5).await;
+
+        // A non-rate-limit failure only gets the standard window: after it
+        // expires the engine is retried even though the rate-limit window
+        // would still be running.
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(limits.acquire("gen").await.is_ok());
+    }
+
+    /// Test double: always fails with a fixed HTTP status.
+    struct FailingEngine {
+        name: &'static str,
+        status: u16,
+    }
+
+    impl SearchEngine for FailingEngine {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn search<'a>(
+            &'a self,
+            _query: &'a str,
+            _max_results: usize,
+        ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
+            Box::pin(async move {
+                Err(EngineError::BadStatus {
+                    engine: self.name,
+                    status: self.status,
+                })
             })
         }
     }

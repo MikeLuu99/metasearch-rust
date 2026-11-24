@@ -19,6 +19,12 @@ pub struct AppConfig {
     pub engine_max_concurrency: usize,
     /// How long an engine that just failed is skipped before retrying, in milliseconds.
     pub engine_cooldown_ms: u64,
+    /// How long an engine that returned a rate-limit response (429/403) is
+    /// skipped before retrying, in milliseconds
+    /// (`ENGINE_RATE_LIMIT_COOLDOWN_MS`). Longer than the standard cooldown:
+    /// hammering a throttling upstream prolongs the block. `0` falls back to
+    /// the standard cooldown.
+    pub engine_rate_limit_cooldown_ms: u64,
     /// Global fan-out deadline in milliseconds (`SEARCH_DEADLINE_MS`): when it
     /// elapses, engines still in flight are abandoned with a Timeout error and
     /// partial results are returned. Mirrors SearXNG's bounded join; `0`
@@ -45,6 +51,7 @@ impl AppConfig {
             // Clamp so a zero limit cannot create an unusable semaphore.
             engine_max_concurrency: env_parse("ENGINE_MAX_CONCURRENCY", 4).max(1),
             engine_cooldown_ms: env_parse("ENGINE_COOLDOWN_MS", 30_000),
+            engine_rate_limit_cooldown_ms: env_parse("ENGINE_RATE_LIMIT_COOLDOWN_MS", 300_000),
             search_deadline_ms: env_parse("SEARCH_DEADLINE_MS", 5_000),
             allowed_origins: std::env::var("ALLOWED_ORIGINS").ok().and_then(|v| {
                 let origins: Vec<String> = v

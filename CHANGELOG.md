@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- extended engine cooldown for rate-limit responses: a 429/403 from an upstream now skips that engine for `ENGINE_RATE_LIMIT_COOLDOWN_MS` (default 5 minutes) instead of the standard 30s window — retrying a throttling upstream on the short window keeps the request signature hot and prolongs the block
+
 ## [0.3.5](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.4...v0.3.5) - 2026-11-24
 
 ### Added

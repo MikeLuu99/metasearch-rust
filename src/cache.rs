@@ -48,9 +48,15 @@ pub fn build_response_cache(ttl: Duration) -> Cache<String, CachedResponse> {
 #[derive(Debug)]
 pub struct EngineLimits {
     semaphores: Mutex<HashMap<&'static str, Arc<Semaphore>>>,
-    cooldowns: Mutex<HashMap<&'static str, Instant>>,
+    /// Per-engine cooldown start instant and the window duration in effect.
+    cooldowns: Mutex<HashMap<&'static str, (Instant, Duration)>>,
     max_concurrency: usize,
     cooldown: Duration,
+    /// Cooldown applied to rate-limit/access-denied failures (429/403): a
+    /// longer window than [`Self::cooldown`], because retrying an actively
+    /// throttling upstream on the standard window keeps the request signature
+    /// hot and prolongs the block.
+    rate_limit_cooldown: Duration,
     /// Optional global fan-out deadline (SearXNG-style bounded join): when it
     /// elapses, engines still in flight are reported as `EngineError::Timeout`
     /// and their requests are cancelled. `None` waits for every engine to
@@ -65,8 +71,16 @@ impl EngineLimits {
             cooldowns: Mutex::new(HashMap::new()),
             max_concurrency,
             cooldown,
+            rate_limit_cooldown: Duration::from_secs(300),
             deadline: None,
         }
+    }
+
+    /// Set the cooldown applied to rate-limit failures (429/403). Defaults to
+    /// 5 minutes; a zero duration falls back to the standard cooldown.
+    pub fn with_rate_limit_cooldown(mut self, rate_limit_cooldown: Duration) -> Self {
+        self.rate_limit_cooldown = rate_limit_cooldown;
+        self
     }
 
     /// Set a global fan-out deadline. `None` (the default) keeps the previous
@@ -79,6 +93,11 @@ impl EngineLimits {
     /// The configured global fan-out deadline, if any.
     pub fn deadline(&self) -> Option<Duration> {
         self.deadline
+    }
+
+    /// The cooldown window applied to rate-limit failures.
+    pub fn rate_limit_cooldown(&self) -> Duration {
+        self.rate_limit_cooldown
     }
 
     /// Acquire a concurrency permit for the engine, or short-circuit with a
@@ -107,12 +126,24 @@ impl EngineLimits {
         })
     }
 
-    /// Record that an engine call failed, starting its cooldown window.
+    /// Record that an engine call failed, starting its standard cooldown window.
     pub fn record_failure(&self, name: &'static str) {
+        self.record_failure_for(name, self.cooldown);
+    }
+
+    /// Record an engine failure with an explicit cooldown window. A zero
+    /// duration falls back to the standard cooldown so a misconfigured limit
+    /// cannot disable protection entirely.
+    pub fn record_failure_for(&self, name: &'static str, cooldown: Duration) {
+        let window = if cooldown.is_zero() {
+            self.cooldown
+        } else {
+            cooldown
+        };
         self.cooldowns
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(name, Instant::now());
+            .insert(name, (Instant::now(), window));
     }
 
     fn in_cooldown(&self, name: &'static str) -> bool {
@@ -121,8 +152,8 @@ impl EngineLimits {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         matches!(
-            cooldowns.get(&name),
-            Some(started) if started.elapsed() < self.cooldown
+            cooldowns.get(name),
+            Some((started, window)) if started.elapsed() < *window
         )
     }
 }
