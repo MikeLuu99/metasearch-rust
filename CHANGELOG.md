@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.4...v0.3.5) - 2026-11-24
+
 ### Added
 
 - global fan-out deadline (`SEARCH_DEADLINE_MS`, default 5000, `0` disables): a search returns as soon as the deadline elapses, keeping results from engines that finished and reporting engines still in flight as `Timeout` failures — mirroring SearXNG's bounded join. Deadline cuts do not trigger the engine cooldown (a slow-but-alive engine is retried on the next request)
+
+### Removed
+
+- unused `search-tui` dependency: search-tui 0.1.4 depends on metadata-search-engine-rs ^0.3, which made the published crate unresolvable (`cyclic package dependency`) for all downstream users
 
 ## [0.3.4](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.3...v0.3.4) - 2026-08-22
 
