@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.5...v0.3.6) - 2026-11-24
+
+### Added
+
+- escalating engine cooldowns (SearXNG SuspendedStatus parity)
+- per-engine proxy pools with cycling and retries
+- browser TLS fingerprint impersonation via wreq
+- extended cooldown for rate-limited engines
+
 ### Added
 
 - extended engine cooldown for rate-limit responses: a 429/403 from an upstream now skips that engine for `ENGINE_RATE_LIMIT_COOLDOWN_MS` (default 5 minutes) instead of the standard 30s window — retrying a throttling upstream on the short window keeps the request signature hot and prolongs the block
