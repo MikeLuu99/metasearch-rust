@@ -246,6 +246,128 @@ Task mix is 70% `/search`, 20% `/images`, 10% `/health`; the query pool is
 embedded in `loadtest/locustfile.py` (`_QUERIES`). Add `--csv results` for CSV
 output.
 
+## Benchmarks vs SearXNG
+
+Head-to-head measured on the same host, same IP, same upstream engines.
+
+**Environment:** Apple M4 (10 cores), macOS 15.7.2, wired to the real internet.
+`metasearch-rs` v0.3.3 release build; SearXNG docker image `2026.11.23+a7163d091`
+(official image, uwsgi, default engine set). metasearch-rs ran with
+`RATE_LIMIT_PER_MINUTE=0` and its default engine set (DDG, Brave, Startpage,
+Yahoo). Latency harness: stdlib Python, sequential 20-distinct-query run;
+throughput: 5-query pool, fixed concurrency, 20–30 s. Percentiles from raw
+per-request timings.
+
+### 1. Cold latency — uncached end-to-end `/search` (upstream-dominated)
+
+metasearch-rs: 50 distinct queries, one request each, sequential, uncached.
+SearXNG: same protocol, 20-query clean run taken before any load; later
+re-measurement attempts were invalidated because the shared IP had been
+temporarily blocked by SearXNG's upstreams (see §2), so its p90/p99 could not
+be re-measured — its clean p95/max (344/428 ms) bracket where they fall.
+
+| Server          | p50    | p90    | p95     | p99      | max      | success |
+| --------------- | ------ | ------ | ------- | -------- | -------- | ------- |
+| SearXNG         | 260 ms | n/a¹   | 344 ms  | n/a¹     | 428 ms   | 100%    |
+| metasearch-rs   | 407 ms | 478 ms | 575 ms  | 8,011 ms | 8,011 ms | 100%    |
+
+**Why is metasearch-rs's p50 slower?** Because response time ≈ *slowest
+engine*, and the implementations wait on different engine sets — not because of
+the language:
+
+- The aggregator waits for **all** engines before responding
+  (`join_all`, src/aggregator.rs:51), so every request samples the maximum of
+  its engines' latencies. The max of 4 engines (metasearch-rs: DDG `/html/`,
+  Brave, Startpage, Yahoo) runs higher than the max of 2 (the official SearXNG
+  docker image's default set: DDG POST + Google CSE) — mathematically and
+  measurably.
+- **Update:** the benchmark below was measured *before* a global fan-out
+  deadline was added. Since then the aggregator races the fan-out against a
+  deadline (`SEARCH_DEADLINE_MS`, default 5 s, `0` disables) SearXNG-style:
+  when it elapses, engines still in flight are reported in `engines_failed` as
+  `Timeout` and the response returns with the engines that finished. This caps
+  the worst case at 5 s instead of `ENGINE_TIMEOUT_MS` (8 s), and because
+  deadline cuts don't trigger the failure cooldown, slow-but-alive engines are
+  retried on the next request.
+- Direct per-engine probes: Brave responded in ~1.0 s (vs ~200–300 ms for the
+  others when healthy). Brave alone drags the max-of-4 distribution up.
+- The p99 = 8,011 ms is exactly `ENGINE_TIMEOUT_MS` (8 s): DDG's `/html/`
+  endpoint occasionally "slow-drips" (a direct probe hung 75 s under repeated
+  hits), and the per-engine timeout converts that stall into a bounded 8 s
+  wait. SearXNG's equivalent cap is its own per-engine timeout (~3 s), which is
+  what bounded its blocked-run tail at 3,025 ms.
+- Server-side work (parse, dedup, RRF) is ~1 ms of the ~400 ms request for
+  both. Cold latency is upstream engine variance, not runtime overhead.
+
+### 2. Throughput — uncached `/search` (upstream-bound)
+
+4 concurrent clients, 5-query pool, 20–30 s, both servers uncached:
+
+| Server        | RPS   | p50   | outcome                                    |
+| ------------- | ----- | ----- | ------------------------------------------ |
+| metasearch-rs | 21.2  | 81 ms | 43% success — engines began 403-ing mid-run |
+| SearXNG       | 382*  | 8 ms  | engines suspended → served empty shells     |
+
+\* SearXNG's 382 RPS is HTTP 200s with `results: []` — its engine-suspension
+mechanism had suspended DDG/Google (403 "access denied" / "unusual traffic")
+and kept serving instant empty responses. metasearch-rs kept paying real
+upstream latency until its per-engine cooldown engaged, hence its lower RPS and
+error rate. **Takeaway:** with the response cache disabled, throughput is
+bounded by upstream anti-bot defenses, not by either implementation — both got
+the shared IP throttled within ~30 s at just 4 concurrent clients. (The two
+runs also confound each other: whichever runs second inherits an already-hot
+IP. Read this row as "uncached search does not scale," not as a winner.)
+
+### 3. Pure HTTP overhead — `/health` vs `/healthz` (no upstream calls)
+
+`ab -n 20000 -c 32`, static endpoint, isolates the server stacks:
+
+| Server          | RPS       | p50   | p99   |
+| --------------- | --------- | ----- | ----- |
+| metasearch-rs   | **48,191** | 1 ms  | 2 ms  |
+| SearXNG         | 2,938     | 10 ms | 16 ms |
+
+**~16× throughput, ~10× p50 latency advantage** for Axum/Tokio over the SearXNG
+uwsgi/Flask stack. (Caveat: the official SearXNG image runs uwsgi with
+conservative worker defaults tuned for scraping, not for static-endpoint RPS.)
+
+### 4. Throughput — metasearch-rs with response cache (`CACHE_TTL_MS=60000`)
+
+Queries served from the in-process cache (single-flight coalesced). SearXNG has
+no equivalent without an external Redis result cache, so this is metasearch-rs
+only:
+
+| Concurrency | RPS    | p50   | p95   | success |
+| ----------- | ------ | ----- | ----- | ------- |
+| 4           | 7,258  | 0.5 ms | 0.7 ms | 100%    |
+| 32          | 6,786  | 4.0 ms | 7.7 ms | 100%    |
+
+Zero errors at both concurrency levels — repeated queries never touch upstream
+engines, which also eliminates the IP-blocking failure mode that caps uncached
+throughput.
+
+### 5. Memory footprint (steady state)
+
+| Server        | RSS     |
+| ------------- | ------- |
+| metasearch-rs | ~19 MB  |
+| SearXNG       | ~123 MB |
+
+### Summary
+
+| Metric                     | metasearch-rs | SearXNG | Winner         |
+| -------------------------- | ------------- | ------- | -------------- |
+| Cold (uncached) p50        | 407 ms        | 260 ms  | SearXNG        |
+| Uncached throughput        | upstream-bound | upstream-bound | tie (both collapse) |
+| Static HTTP RPS            | 48,191        | 2,938   | metasearch-rs  |
+| Cached throughput          | 6,786–7,258 RPS | n/a (needs Redis) | metasearch-rs |
+| Memory                     | ~19 MB        | ~123 MB | metasearch-rs  |
+
+The Rust implementation's advantage is in the serving layer (throughput,
+latency under concurrency, memory, zero-dependency caching). The scraping path
+is upstream-bound for both, where SearXNG's larger engine pool gives it better
+cold p50 and its engine-suspension gives it graceful degradation under blocks.
+
 ## Tests
 
 ```bash

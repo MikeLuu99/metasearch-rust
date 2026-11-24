@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- global fan-out deadline (`SEARCH_DEADLINE_MS`, default 5000, `0` disables): a search returns as soon as the deadline elapses, keeping results from engines that finished and reporting engines still in flight as `Timeout` failures — mirroring SearXNG's bounded join. Deadline cuts do not trigger the engine cooldown (a slow-but-alive engine is retried on the next request)
+
 ## [0.3.4](https://github.com/MikeLuu99/metasearch-rust/compare/v0.3.3...v0.3.4) - 2026-08-22
 
 ### Other

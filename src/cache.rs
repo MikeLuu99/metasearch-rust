@@ -51,6 +51,11 @@ pub struct EngineLimits {
     cooldowns: Mutex<HashMap<&'static str, Instant>>,
     max_concurrency: usize,
     cooldown: Duration,
+    /// Optional global fan-out deadline (SearXNG-style bounded join): when it
+    /// elapses, engines still in flight are reported as `EngineError::Timeout`
+    /// and their requests are cancelled. `None` waits for every engine to
+    /// finish or hit its own per-engine timeout.
+    deadline: Option<Duration>,
 }
 
 impl EngineLimits {
@@ -60,7 +65,20 @@ impl EngineLimits {
             cooldowns: Mutex::new(HashMap::new()),
             max_concurrency,
             cooldown,
+            deadline: None,
         }
+    }
+
+    /// Set a global fan-out deadline. `None` (the default) keeps the previous
+    /// wait-for-all semantics.
+    pub fn with_deadline(mut self, deadline: Option<Duration>) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    /// The configured global fan-out deadline, if any.
+    pub fn deadline(&self) -> Option<Duration> {
+        self.deadline
     }
 
     /// Acquire a concurrency permit for the engine, or short-circuit with a

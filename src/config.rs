@@ -19,6 +19,11 @@ pub struct AppConfig {
     pub engine_max_concurrency: usize,
     /// How long an engine that just failed is skipped before retrying, in milliseconds.
     pub engine_cooldown_ms: u64,
+    /// Global fan-out deadline in milliseconds (`SEARCH_DEADLINE_MS`): when it
+    /// elapses, engines still in flight are abandoned with a Timeout error and
+    /// partial results are returned. Mirrors SearXNG's bounded join; `0`
+    /// disables it and restores wait-for-every-engine semantics.
+    pub search_deadline_ms: u64,
     /// Allowed CORS origins as a comma-separated list (`ALLOWED_ORIGINS`).
     /// Unset or empty keeps the historical fully-permissive CORS behavior;
     /// set it to restrict which web origins may call this API.
@@ -40,6 +45,7 @@ impl AppConfig {
             // Clamp so a zero limit cannot create an unusable semaphore.
             engine_max_concurrency: env_parse("ENGINE_MAX_CONCURRENCY", 4).max(1),
             engine_cooldown_ms: env_parse("ENGINE_COOLDOWN_MS", 30_000),
+            search_deadline_ms: env_parse("SEARCH_DEADLINE_MS", 5_000),
             allowed_origins: std::env::var("ALLOWED_ORIGINS").ok().and_then(|v| {
                 let origins: Vec<String> = v
                     .split(',')

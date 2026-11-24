@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use futures::future::join_all;
+use futures::stream::{FuturesUnordered, StreamExt};
 
 use crate::cache::EngineLimits;
 use crate::engines::{ImageSearchEngine, SearchEngine};
@@ -14,6 +14,65 @@ use crate::normalizer;
 // cross-engine agreement can outweigh a single strong signal.
 const RRF_K: f64 = 60.0;
 
+/// Fan out `(engine name, future)` pairs concurrently, optionally bounded by a
+/// global deadline (SearXNG-style bounded join).
+///
+/// Without a deadline this waits for every future. With one, futures still in
+/// flight when the deadline elapses are cancelled (their in-flight HTTP
+/// requests are dropped) and reported as [`EngineError::Timeout`] failures —
+/// partial successes from the finished engines are kept. Deadline cuts do not
+/// trigger the failure cooldown, matching SearXNG's `suspend=False` for
+/// timeouts: a slow-but-alive engine should not be banned for the next request.
+async fn fan_out<T, F>(
+    tasks: impl IntoIterator<Item = (&'static str, F)>,
+    deadline: Option<std::time::Duration>,
+) -> (Vec<(String, Vec<T>)>, Vec<(String, EngineError)>)
+where
+    F: Future<Output = Result<Vec<T>, EngineError>>,
+{
+    let mut remaining: HashSet<&'static str> = HashSet::new();
+    let mut pending: FuturesUnordered<_> = FuturesUnordered::new();
+    for (name, future) in tasks {
+        remaining.insert(name);
+        pending.push(async move { (name, future.await) });
+    }
+
+    let mut successes = Vec::new();
+    let mut failures = Vec::new();
+    let deadline_at = deadline.map(|d| tokio::time::Instant::now() + d);
+
+    loop {
+        // `pending.next()` resolves each engine as it finishes, so a deadline
+        // cut preserves everything already completed.
+        let step = if let Some(deadline_at) = deadline_at {
+            match tokio::time::timeout_at(deadline_at, pending.next()).await {
+                Ok(step) => step,
+                Err(_elapsed) => {
+                    for name in &remaining {
+                        tracing::warn!(engine = %name, "fan-out deadline elapsed; engine abandoned");
+                        failures.push((name.to_string(), EngineError::Timeout { engine: name }));
+                    }
+                    break;
+                }
+            }
+        } else {
+            pending.next().await
+        };
+
+        let Some((name, result)) = step else {
+            break; // every engine finished
+        };
+        remaining.remove(name);
+
+        match result {
+            Ok(results) => successes.push((name.to_string(), results)),
+            Err(e) => failures.push((name.to_string(), e)),
+        }
+    }
+
+    (successes, failures)
+}
+
 /// Fan out a query to all engines concurrently.
 ///
 /// Returns the collected raw results and a list of engine names that failed,
@@ -24,43 +83,26 @@ pub async fn query_all_engines(
     query: &str,
     max_results: usize,
 ) -> (Vec<(String, Vec<SearchResult>)>, Vec<(String, EngineError)>) {
-    let futures: Vec<_> = engines
-        .iter()
-        .map(|engine| {
-            let engine = Arc::clone(engine);
-            let query = query.to_string();
-            async move {
-                let name = engine.name();
-                let result = match limits.acquire(name).await {
-                    Ok(_permit) => {
-                        let res = engine.search(&query, max_results).await;
-                        // Only a real failure cools the engine down; a cooldown
-                        // skip defers the next attempt instead of pushing it out.
-                        if res.is_err() {
-                            limits.record_failure(name);
-                        }
-                        res
+    let tasks = engines.iter().map(|engine| {
+        let engine = Arc::clone(engine);
+        let query = query.to_string();
+        (engine.name(), async move {
+            match limits.acquire(engine.name()).await {
+                Ok(_permit) => {
+                    let res = engine.search(&query, max_results).await;
+                    // Only a real failure cools the engine down; a cooldown
+                    // skip defers the next attempt instead of pushing it out.
+                    if res.is_err() {
+                        limits.record_failure(engine.name());
                     }
-                    Err(e) => Err(e),
-                };
-                (name.to_string(), result)
+                    res
+                }
+                Err(e) => Err(e),
             }
         })
-        .collect();
+    });
 
-    let outcomes = join_all(futures).await;
-
-    let mut successes = Vec::new();
-    let mut failures = Vec::new();
-
-    for (name, result) in outcomes {
-        match result {
-            Ok(results) => successes.push((name, results)),
-            Err(e) => failures.push((name, e)),
-        }
-    }
-
-    (successes, failures)
+    fan_out(tasks, limits.deadline()).await
 }
 
 /// Deduplicate and rank results from multiple engines using Reciprocal Rank Fusion.
@@ -141,41 +183,24 @@ pub async fn query_all_image_engines(
     query: &str,
     max_results: usize,
 ) -> (Vec<(String, Vec<ImageResult>)>, Vec<(String, EngineError)>) {
-    let futures: Vec<_> = engines
-        .iter()
-        .map(|engine| {
-            let engine = Arc::clone(engine);
-            let query = query.to_string();
-            async move {
-                let name = engine.name();
-                let result = match limits.acquire(name).await {
-                    Ok(_permit) => {
-                        let res = engine.search_images(&query, max_results).await;
-                        if res.is_err() {
-                            limits.record_failure(name);
-                        }
-                        res
+    let tasks = engines.iter().map(|engine| {
+        let engine = Arc::clone(engine);
+        let query = query.to_string();
+        (engine.name(), async move {
+            match limits.acquire(engine.name()).await {
+                Ok(_permit) => {
+                    let res = engine.search_images(&query, max_results).await;
+                    if res.is_err() {
+                        limits.record_failure(engine.name());
                     }
-                    Err(e) => Err(e),
-                };
-                (name.to_string(), result)
+                    res
+                }
+                Err(e) => Err(e),
             }
         })
-        .collect();
+    });
 
-    let outcomes = join_all(futures).await;
-
-    let mut successes = Vec::new();
-    let mut failures = Vec::new();
-
-    for (name, result) in outcomes {
-        match result {
-            Ok(results) => successes.push((name, results)),
-            Err(e) => failures.push((name, e)),
-        }
-    }
-
-    (successes, failures)
+    fan_out(tasks, limits.deadline()).await
 }
 
 /// Deduplicate and rank image results across engines using RRF.
@@ -277,7 +302,10 @@ fn image_key(result: &ImageResult) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
+    use crate::engines::BoxFuture;
 
     fn make_result(url: &str, engine: &str, title: &str) -> SearchResult {
         SearchResult {
@@ -507,6 +535,119 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://valid.com");
+    }
+
+    #[tokio::test]
+    async fn test_deadline_returns_partial_results_and_marks_laggards() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockEngine::fast("fast")),
+            Arc::new(MockEngine::slow("slow")),
+        ];
+        let limits = EngineLimits::default().with_deadline(Some(Duration::from_millis(50)));
+
+        let start = Instant::now();
+        let (successes, failures) = query_all_engines(&engines, &limits, "q", 10).await;
+        let elapsed = start.elapsed();
+
+        // The fast engine's results survive; the slow one is cut at the deadline.
+        assert_eq!(successes.len(), 1);
+        assert_eq!(successes[0].0, "fast");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].0, "slow");
+        assert!(matches!(
+            &failures[0].1,
+            EngineError::Timeout { engine: "slow" }
+        ));
+
+        // The cut happened at the deadline, not at the slow engine's full delay.
+        assert!(elapsed >= Duration::from_millis(50));
+        assert!(elapsed < MockEngine::SLOW_DELAY);
+    }
+
+    #[tokio::test]
+    async fn test_deadline_disabled_waits_for_all_engines() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockEngine::fast("fast")),
+            Arc::new(MockEngine::slow("slow")),
+        ];
+        // Default EngineLimits has no deadline: wait-for-all semantics.
+        let (successes, failures) =
+            query_all_engines(&engines, &EngineLimits::default(), "q", 10).await;
+
+        assert_eq!(successes.len(), 2);
+        assert!(failures.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_deadline_not_triggered_when_all_engines_finish_in_time() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![
+            Arc::new(MockEngine::fast("a")),
+            Arc::new(MockEngine::fast("b")),
+        ];
+        let limits = EngineLimits::default().with_deadline(Some(Duration::from_secs(2)));
+
+        let (successes, failures) = query_all_engines(&engines, &limits, "q", 10).await;
+
+        assert_eq!(successes.len(), 2);
+        assert!(failures.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_deadline_cut_does_not_start_cooldown() {
+        let engines: Vec<Arc<dyn SearchEngine>> = vec![Arc::new(MockEngine::slow("slow"))];
+        let limits = EngineLimits::default().with_deadline(Some(Duration::from_millis(20)));
+
+        let _ = query_all_engines(&engines, &limits, "q", 10).await;
+
+        // A deadline cut is not a real failure (SearXNG suspend=False parity):
+        // the engine must not be blocked by a cooldown on the next request.
+        assert!(limits.acquire("slow").await.is_ok());
+    }
+
+    /// Test double: deterministic delay, always returns one fixed result.
+    struct MockEngine {
+        name: &'static str,
+        delay: Duration,
+    }
+
+    impl MockEngine {
+        const SLOW_DELAY: Duration = Duration::from_secs(10);
+
+        fn fast(name: &'static str) -> Self {
+            Self {
+                name,
+                delay: Duration::from_millis(5),
+            }
+        }
+
+        fn slow(name: &'static str) -> Self {
+            Self {
+                name,
+                delay: Self::SLOW_DELAY,
+            }
+        }
+    }
+
+    impl SearchEngine for MockEngine {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn search<'a>(
+            &'a self,
+            _query: &'a str,
+            _max_results: usize,
+        ) -> BoxFuture<'a, Result<Vec<SearchResult>, EngineError>> {
+            Box::pin(async move {
+                tokio::time::sleep(self.delay).await;
+                Ok(vec![SearchResult {
+                    title: "mock".to_string(),
+                    url: "https://example.com".to_string(),
+                    snippet: None,
+                    source_engine: self.name.to_string(),
+                }])
+            })
+        }
     }
 
     #[tokio::test]

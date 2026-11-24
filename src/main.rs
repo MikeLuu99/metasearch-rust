@@ -78,6 +78,11 @@ async fn main() -> anyhow::Result<()> {
         engine_limits: EngineLimits::new(
             config.engine_max_concurrency,
             Duration::from_millis(config.engine_cooldown_ms),
+        )
+        .with_deadline(
+            // 0 disables the deadline: wait for every engine unconditionally.
+            (config.search_deadline_ms > 0)
+                .then(|| Duration::from_millis(config.search_deadline_ms)),
         ),
         allowed_origins: config.allowed_origins.clone(),
         rate_limiter,
