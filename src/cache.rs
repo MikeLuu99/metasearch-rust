@@ -57,6 +57,12 @@ pub struct EngineLimits {
     /// throttling upstream on the standard window keeps the request signature
     /// hot and prolongs the block.
     rate_limit_cooldown: Duration,
+    /// Ceiling for the escalating cooldown window
+    /// (`ENGINE_COOLDOWN_MAX_MS`). SearXNG's `max_ban_time_on_fail`.
+    max_cooldown: Duration,
+    /// Consecutive failure count per engine, driving the escalation. Reset
+    /// whenever the engine returns a success (SearXNG's `resume`).
+    consecutive_failures: Mutex<HashMap<&'static str, u32>>,
     /// Optional global fan-out deadline (SearXNG-style bounded join): when it
     /// elapses, engines still in flight are reported as `EngineError::Timeout`
     /// and their requests are cancelled. `None` waits for every engine to
@@ -72,6 +78,8 @@ impl EngineLimits {
             max_concurrency,
             cooldown,
             rate_limit_cooldown: Duration::from_secs(300),
+            max_cooldown: Duration::from_secs(600),
+            consecutive_failures: Mutex::new(HashMap::new()),
             deadline: None,
         }
     }
@@ -80,6 +88,13 @@ impl EngineLimits {
     /// 5 minutes; a zero duration falls back to the standard cooldown.
     pub fn with_rate_limit_cooldown(mut self, rate_limit_cooldown: Duration) -> Self {
         self.rate_limit_cooldown = rate_limit_cooldown;
+        self
+    }
+
+    /// Set the ceiling for the escalating cooldown window. Defaults to
+    /// 10 minutes.
+    pub fn with_max_cooldown(mut self, max_cooldown: Duration) -> Self {
+        self.max_cooldown = max_cooldown;
         self
     }
 
@@ -127,23 +142,75 @@ impl EngineLimits {
     }
 
     /// Record that an engine call failed, starting its standard cooldown window.
+    ///
+    /// Escalation (SearXNG's `SuspendedStatus`): the window doubles with each
+    /// *consecutive* failure — base, 2×, 4×, … capped at `max_cooldown` — so a
+    /// flapping engine stops costing every request a timeout. A success resets
+    /// the count (see [`Self::record_success`]). Rate-limit windows escalate
+    /// from their own base the same way.
     pub fn record_failure(&self, name: &'static str) {
-        self.record_failure_for(name, self.cooldown);
+        let n = self.bump_failures(name);
+        let window = self.escalate(self.cooldown, n);
+        self.record_window(name, window);
     }
 
-    /// Record an engine failure with an explicit cooldown window. A zero
+    /// Record an engine failure with an explicit base cooldown window. A zero
     /// duration falls back to the standard cooldown so a misconfigured limit
-    /// cannot disable protection entirely.
-    pub fn record_failure_for(&self, name: &'static str, cooldown: Duration) {
-        let window = if cooldown.is_zero() {
+    /// cannot disable protection entirely. The window escalates with
+    /// consecutive failures, capped at `max_cooldown`.
+    pub fn record_failure_for(&self, name: &'static str, base_cooldown: Duration) {
+        let n = self.bump_failures(name);
+        let base = if base_cooldown.is_zero() {
             self.cooldown
         } else {
-            cooldown
+            base_cooldown
         };
+        let window = self.escalate(base, n);
+        self.record_window(name, window);
+    }
+
+    /// Record that an engine call succeeded, resetting its consecutive-failure
+    /// count (SearXNG's `resume`).
+    pub fn record_success(&self, name: &'static str) {
+        self.consecutive_failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(name);
+    }
+
+    /// Increment and return the consecutive failure count for the engine.
+    fn bump_failures(&self, name: &'static str) -> u32 {
+        let mut map = self
+            .consecutive_failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let n = map.entry(name).or_insert(0);
+        *n += 1;
+        *n
+    }
+
+    /// Escalate a base window: base × 2^(n-1) for the n-th consecutive
+    /// failure, capped at `max_cooldown`. The first failure uses the base.
+    fn escalate(&self, base: Duration, consecutive: u32) -> Duration {
+        let multiplier = 1u32 << (consecutive - 1).min(16);
+        let window = base.saturating_mul(multiplier);
+        window.min(self.max_cooldown)
+    }
+
+    fn record_window(&self, name: &'static str, window: Duration) {
         self.cooldowns
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(name, (Instant::now(), window));
+    }
+
+    /// Window currently recorded for the engine, if any (test + debug aid).
+    pub fn current_window(&self, name: &'static str) -> Option<Duration> {
+        self.cooldowns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(name)
+            .map(|(_, window)| *window)
     }
 
     fn in_cooldown(&self, name: &'static str) -> bool {
@@ -167,6 +234,53 @@ impl Default for EngineLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escalating_failure_windows_double_and_cap() {
+        let limits = EngineLimits::new(2, Duration::from_millis(30))
+            .with_max_cooldown(Duration::from_millis(100));
+
+        // 1st failure: base window. 2nd: 2x. 3rd: 4x. 4th+: capped at max.
+        limits.record_failure("e");
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(30)));
+        limits.record_failure("e");
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(60)));
+        limits.record_failure("e");
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(100)));
+        limits.record_failure("e");
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn success_resets_the_escalation() {
+        let limits = EngineLimits::new(2, Duration::from_millis(30))
+            .with_max_cooldown(Duration::from_millis(100));
+
+        limits.record_failure("e");
+        limits.record_failure("e");
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(60)));
+
+        limits.record_success("e");
+
+        // Back to the base window after a recovery.
+        limits.record_failure("e");
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(30)));
+    }
+
+    #[test]
+    fn rate_limit_windows_escalate_from_their_own_base() {
+        let limits = EngineLimits::new(2, Duration::from_millis(30))
+            .with_rate_limit_cooldown(Duration::from_millis(200))
+            .with_max_cooldown(Duration::from_millis(500));
+
+        limits.record_failure_for("e", limits.rate_limit_cooldown());
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(200)));
+        limits.record_failure_for("e", limits.rate_limit_cooldown());
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(400)));
+        limits.record_failure_for("e", limits.rate_limit_cooldown());
+        // 800ms would exceed the 500ms cap.
+        assert_eq!(limits.current_window("e"), Some(Duration::from_millis(500)));
+    }
 
     #[tokio::test]
     async fn acquire_allows_concurrent_permits_up_to_the_limit() {

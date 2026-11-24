@@ -83,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
             Duration::from_millis(config.engine_cooldown_ms),
         )
         .with_rate_limit_cooldown(Duration::from_millis(config.engine_rate_limit_cooldown_ms))
+        .with_max_cooldown(Duration::from_millis(config.engine_cooldown_max_ms))
         .with_deadline(
             // 0 disables the deadline: wait for every engine unconditionally.
             (config.search_deadline_ms > 0)

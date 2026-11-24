@@ -30,6 +30,10 @@ pub struct AppConfig {
     /// when one is configured (`ENGINE_RETRIES`). `0` disables retries.
     /// 429 responses are never retried.
     pub engine_retries: u64,
+    /// Ceiling for the escalating engine cooldown (`ENGINE_COOLDOWN_MAX_MS`):
+    /// the window doubles with each consecutive failure — base, 2×, 4×, … —
+    /// and never exceeds this cap. Mirrors SearXNG's `max_ban_time_on_fail`.
+    pub engine_cooldown_max_ms: u64,
     /// Global fan-out deadline in milliseconds (`SEARCH_DEADLINE_MS`): when it
     /// elapses, engines still in flight are abandoned with a Timeout error and
     /// partial results are returned. Mirrors SearXNG's bounded join; `0`
@@ -58,6 +62,7 @@ impl AppConfig {
             engine_cooldown_ms: env_parse("ENGINE_COOLDOWN_MS", 30_000),
             engine_rate_limit_cooldown_ms: env_parse("ENGINE_RATE_LIMIT_COOLDOWN_MS", 300_000),
             engine_retries: env_parse("ENGINE_RETRIES", 0),
+            engine_cooldown_max_ms: env_parse("ENGINE_COOLDOWN_MAX_MS", 600_000),
             search_deadline_ms: env_parse("SEARCH_DEADLINE_MS", 5_000),
             allowed_origins: std::env::var("ALLOWED_ORIGINS").ok().and_then(|v| {
                 let origins: Vec<String> = v

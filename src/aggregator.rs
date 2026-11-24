@@ -111,8 +111,10 @@ pub async fn query_all_engines(
                     let res = engine.search(&query, max_results).await;
                     // Only a real failure cools the engine down; a cooldown
                     // skip defers the next attempt instead of pushing it out.
-                    if let Err(e) = &res {
-                        record_engine_failure(limits, engine.name(), e);
+                    // A success resets the escalating suspension counter.
+                    match &res {
+                        Err(e) => record_engine_failure(limits, engine.name(), e),
+                        Ok(_) => limits.record_success(engine.name()),
                     }
                     res
                 }
@@ -209,8 +211,9 @@ pub async fn query_all_image_engines(
             match limits.acquire(engine.name()).await {
                 Ok(_permit) => {
                     let res = engine.search_images(&query, max_results).await;
-                    if let Err(e) = &res {
-                        record_engine_failure(limits, engine.name(), e);
+                    match &res {
+                        Err(e) => record_engine_failure(limits, engine.name(), e),
+                        Ok(_) => limits.record_success(engine.name()),
                     }
                     res
                 }
