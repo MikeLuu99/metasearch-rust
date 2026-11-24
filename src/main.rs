@@ -7,7 +7,7 @@ use metadata_search_engine_rs::{
     engines::{
         BingImagesEngine, BraveEngine, DuckDuckGoEngine, DuckDuckGoImagesEngine,
         GoogleImagesEngine, ImageSearchEngine, SearchEngine, SogouImagesEngine, StartpageEngine,
-        YahooEngine, build_http_client,
+        YahooEngine, build_client_pool,
     },
     server::{build_router, handlers::AppState},
 };
@@ -23,43 +23,46 @@ async fn main() -> anyhow::Result<()> {
 
     let config = AppConfig::from_env();
     let timeout = Duration::from_millis(config.engine_timeout_ms);
+    let retries = usize::try_from(config.engine_retries).unwrap_or(0);
 
-    // Each engine gets its own client so cookies set by one engine's redirect
-    // chains never leak into another engine's sessions.
+    // Each engine gets its own client pool so cookies set by one engine's
+    // redirect chains never leak into another engine's sessions, and so
+    // proxy lists (ENGINE_<NAME>_PROXIES / ENGINE_PROXIES) can differ per
+    // engine. Within a pool, requests cycle across the proxies.
     let engines: Vec<Arc<dyn SearchEngine>> = vec![
         Arc::new(DuckDuckGoEngine::with_timeout(
-            Arc::new(build_http_client()?),
+            build_client_pool("duckduckgo", retries)?,
             timeout,
         )),
         Arc::new(BraveEngine::with_timeout(
-            Arc::new(build_http_client()?),
+            build_client_pool("brave", retries)?,
             timeout,
         )),
         Arc::new(StartpageEngine::with_timeout(
-            Arc::new(build_http_client()?),
+            build_client_pool("startpage", retries)?,
             timeout,
         )),
         Arc::new(YahooEngine::with_timeout(
-            Arc::new(build_http_client()?),
+            build_client_pool("yahoo", retries)?,
             timeout,
         )),
     ];
 
     let image_engines: Vec<Arc<dyn ImageSearchEngine>> = vec![
         Arc::new(DuckDuckGoImagesEngine::with_timeout(
-            Arc::new(build_http_client()?),
+            build_client_pool("duckduckgo", retries)?,
             timeout,
         )),
         Arc::new(BingImagesEngine::with_timeout(
-            Arc::new(build_http_client()?),
+            build_client_pool("bing", retries)?,
             timeout,
         )),
         Arc::new(GoogleImagesEngine::with_timeout(
-            Arc::new(build_http_client()?),
+            build_client_pool("google", retries)?,
             timeout,
         )),
         Arc::new(SogouImagesEngine::with_timeout(
-            Arc::new(build_http_client()?),
+            build_client_pool("sogou", retries)?,
             timeout,
         )),
     ];

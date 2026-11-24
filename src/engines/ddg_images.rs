@@ -1,9 +1,8 @@
 use std::time::Duration;
 
 use serde::Deserialize;
-use wreq::Client;
 
-use super::is_http_url;
+use super::{EngineClients, fetch_text, is_http_url};
 use crate::error::EngineError;
 use crate::models::ImageResult;
 
@@ -16,81 +15,39 @@ const DDG_IMAGES_API: &str = "https://duckduckgo.com/i.js";
 /// DDG requires a per-query `vqd` token: first fetch the regular images page to
 /// extract the token, then query the `i.js` JSON API with it.
 pub async fn search(
-    client: &Client,
+    clients: &EngineClients,
     query: &str,
     max_results: usize,
     timeout: Duration,
 ) -> Result<Vec<ImageResult>, EngineError> {
-    let token = fetch_vqd_token(client, query, timeout).await?;
+    let token = fetch_vqd_token(clients, query, timeout).await?;
 
-    // Timeout covers send *and* body download (see duckduckgo.rs).
-    let fetch = async {
-        let response = client
+    let body = fetch_text(ENGINE, clients, timeout, |client| {
+        client
             .get(DDG_IMAGES_API)
             // i.js returns 403 over HTTP/2 — DDG only serves it over HTTP/1.1
             .version(wreq::Version::HTTP_11)
             .query(&[("l", "us-en"), ("o", "json"), ("q", query), ("vqd", &token)])
-            .send()
-            .await
-            .map_err(|e| EngineError::Http {
-                engine: ENGINE,
-                source: e,
-            })?;
-
-        if !response.status().is_success() {
-            return Err(EngineError::BadStatus {
-                engine: ENGINE,
-                status: response.status().as_u16(),
-            });
-        }
-
-        response.text().await.map_err(|e| EngineError::Http {
-            engine: ENGINE,
-            source: e,
-        })
-    };
-
-    let body = tokio::time::timeout(timeout, fetch)
-        .await
-        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
+    })
+    .await?;
 
     parse_json(&body, max_results)
 }
 
 /// Fetch the images search page and extract the `vqd` token it embeds.
 async fn fetch_vqd_token(
-    client: &Client,
+    clients: &EngineClients,
     query: &str,
     timeout: Duration,
 ) -> Result<String, EngineError> {
-    let fetch = async {
-        let response = client
-            .get(DDG_URL)
-            .version(wreq::Version::HTTP_11)
-            .query(&[("q", query), ("iax", "images"), ("ia", "images")])
-            .send()
-            .await
-            .map_err(|e| EngineError::Http {
-                engine: ENGINE,
-                source: e,
-            })?;
-
-        if !response.status().is_success() {
-            return Err(EngineError::BadStatus {
-                engine: ENGINE,
-                status: response.status().as_u16(),
-            });
-        }
-
-        response.text().await.map_err(|e| EngineError::Http {
-            engine: ENGINE,
-            source: e,
-        })
-    };
-
-    let body = tokio::time::timeout(timeout, fetch)
-        .await
-        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
+    let body = fetch_text(ENGINE, clients, timeout, |client| {
+        client.get(DDG_URL).version(wreq::Version::HTTP_11).query(&[
+            ("q", query),
+            ("iax", "images"),
+            ("ia", "images"),
+        ])
+    })
+    .await?;
 
     extract_vqd(&body).ok_or_else(|| EngineError::ParseFailed {
         engine: ENGINE,
@@ -282,9 +239,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_live_search() {
-        let client = crate::engines::build_http_client().unwrap();
+        let clients = EngineClients::direct().unwrap();
         let results = search(
-            &client,
+            &clients,
             "rust programming language logo",
             10,
             Duration::from_millis(crate::engines::DEFAULT_TIMEOUT_MS),

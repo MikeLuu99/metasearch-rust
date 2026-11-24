@@ -25,6 +25,11 @@ pub struct AppConfig {
     /// hammering a throttling upstream prolongs the block. `0` falls back to
     /// the standard cooldown.
     pub engine_rate_limit_cooldown_ms: u64,
+    /// Extra attempts an engine makes through its client pool after a
+    /// retryable failure (5xx/403/transport error), cycling to the next proxy
+    /// when one is configured (`ENGINE_RETRIES`). `0` disables retries.
+    /// 429 responses are never retried.
+    pub engine_retries: u64,
     /// Global fan-out deadline in milliseconds (`SEARCH_DEADLINE_MS`): when it
     /// elapses, engines still in flight are abandoned with a Timeout error and
     /// partial results are returned. Mirrors SearXNG's bounded join; `0`
@@ -52,6 +57,7 @@ impl AppConfig {
             engine_max_concurrency: env_parse("ENGINE_MAX_CONCURRENCY", 4).max(1),
             engine_cooldown_ms: env_parse("ENGINE_COOLDOWN_MS", 30_000),
             engine_rate_limit_cooldown_ms: env_parse("ENGINE_RATE_LIMIT_COOLDOWN_MS", 300_000),
+            engine_retries: env_parse("ENGINE_RETRIES", 0),
             search_deadline_ms: env_parse("SEARCH_DEADLINE_MS", 5_000),
             allowed_origins: std::env::var("ALLOWED_ORIGINS").ok().and_then(|v| {
                 let origins: Vec<String> = v

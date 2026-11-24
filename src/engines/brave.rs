@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use scraper::Html;
-use wreq::Client;
 
+use super::{EngineClients, fetch_text};
 use crate::error::EngineError;
 use crate::models::SearchResult;
 
@@ -10,39 +10,15 @@ const ENGINE: &str = "brave";
 const BRAVE_URL: &str = "https://search.brave.com/search";
 
 pub async fn search(
-    client: &Client,
+    clients: &EngineClients,
     query: &str,
     max_results: usize,
     timeout: Duration,
 ) -> Result<Vec<SearchResult>, EngineError> {
-    // Timeout covers send *and* body download (see duckduckgo.rs).
-    let fetch = async {
-        let response = client
-            .get(BRAVE_URL)
-            .query(&[("q", query)])
-            .send()
-            .await
-            .map_err(|e| EngineError::Http {
-                engine: ENGINE,
-                source: e,
-            })?;
-
-        if !response.status().is_success() {
-            return Err(EngineError::BadStatus {
-                engine: ENGINE,
-                status: response.status().as_u16(),
-            });
-        }
-
-        response.text().await.map_err(|e| EngineError::Http {
-            engine: ENGINE,
-            source: e,
-        })
-    };
-
-    let body = tokio::time::timeout(timeout, fetch)
-        .await
-        .map_err(|_| EngineError::Timeout { engine: ENGINE })??;
+    let body = fetch_text(ENGINE, clients, timeout, |client| {
+        client.get(BRAVE_URL).query(&[("q", query)])
+    })
+    .await?;
 
     parse(&body, max_results)
 }
@@ -188,9 +164,9 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_live_search() {
-        let client = crate::engines::build_http_client().unwrap();
+        let clients = EngineClients::direct().unwrap();
         let results = search(
-            &client,
+            &clients,
             "rust programming language",
             10,
             Duration::from_millis(crate::engines::DEFAULT_TIMEOUT_MS),
