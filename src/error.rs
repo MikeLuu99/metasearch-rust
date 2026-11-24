@@ -15,7 +15,7 @@ pub enum EngineError {
     Http {
         engine: &'static str,
         #[source]
-        source: reqwest::Error,
+        source: wreq::Error,
     },
 
     #[error("engine '{engine}' returned status {status}")]

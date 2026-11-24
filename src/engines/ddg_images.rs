@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use reqwest::Client;
 use serde::Deserialize;
+use wreq::Client;
 
 use super::is_http_url;
 use crate::error::EngineError;
@@ -28,7 +28,7 @@ pub async fn search(
         let response = client
             .get(DDG_IMAGES_API)
             // i.js returns 403 over HTTP/2 — DDG only serves it over HTTP/1.1
-            .version(reqwest::Version::HTTP_11)
+            .version(wreq::Version::HTTP_11)
             .query(&[("l", "us-en"), ("o", "json"), ("q", query), ("vqd", &token)])
             .send()
             .await
@@ -66,7 +66,7 @@ async fn fetch_vqd_token(
     let fetch = async {
         let response = client
             .get(DDG_URL)
-            .version(reqwest::Version::HTTP_11)
+            .version(wreq::Version::HTTP_11)
             .query(&[("q", query), ("iax", "images"), ("ia", "images")])
             .send()
             .await

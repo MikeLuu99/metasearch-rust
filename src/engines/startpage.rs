@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use reqwest::Client;
 use scraper::Html;
+use wreq::Client;
 
 use crate::error::EngineError;
 use crate::models::SearchResult;

@@ -15,7 +15,8 @@ exclude = ["loadtest/**"]
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["gzip", "brotli", "cookies"] }
+wreq = { version = "=6.0.0-rc.31", features = ["gzip", "brotli", "cookies", "query"] }
+wreq-util = "=3.0.0-rc.14"
 scraper = "0.20"
 axum = "0.7"
 tower-http = { version = "0.5", features = ["trace", "cors"] }

@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use reqwest::Client;
 use scraper::Html;
 use serde::Deserialize;
+use wreq::Client;
 
 use super::is_http_url;
 use crate::error::EngineError;

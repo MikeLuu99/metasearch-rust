@@ -1,10 +1,10 @@
 use std::time::Duration;
 
-use reqwest::{
+use serde::Deserialize;
+use wreq::{
     Client,
     header::{self, HeaderValue},
 };
-use serde::Deserialize;
 
 use super::is_http_url;
 use crate::error::EngineError;
